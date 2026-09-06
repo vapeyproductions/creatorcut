@@ -36,7 +36,8 @@ Rather than treating clip selection as an opaque generative-AI task, CreatorCut 
 
 CreatorCut currently includes a validated seed annotation set, timestamped transcription,
 a pipeline that joins human-scored intervals to transcript text, and a sentence-aligned
-candidate generator evaluated against the human selections.
+candidate generator evaluated against the human selections. Transparent duration-only and
+transcript-heuristic rankers establish the first ranking baselines.
 
 ## Local development
 
@@ -76,6 +77,19 @@ creatorcut-evaluate-candidates
 The current seed evaluation generates 2,152 candidates across three videos and recovers
 all 17 human-selected intervals at temporal IoU ≥ 0.70. Generated media, transcripts,
 candidate records, and evaluation artifacts remain local.
+
+Score and evaluate the transparent ranking baselines:
+
+```bash
+creatorcut-score-baselines
+creatorcut-evaluate-baselines
+```
+
+The initial transcript heuristic does not recover a known strong clip in its top 10 and has
+negative rank correlation with the human scores. This is retained as an honest experimental
+baseline: surface-level punctuation, keyword, and speaking-rate features do not capture the
+semantic value and payoff represented in the annotations. See
+[docs/baseline-evaluation.md](docs/baseline-evaluation.md) for methodology and limitations.
 
 Run the automated checks:
 

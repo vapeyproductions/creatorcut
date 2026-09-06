@@ -24,6 +24,8 @@ creatorcut-transcribe = "creatorcut.transcription:main"
 creatorcut-build-dataset = "creatorcut.dataset:build_dataset_main"
 creatorcut-generate-candidates = "creatorcut.candidates:generate_main"
 creatorcut-evaluate-candidates = "creatorcut.candidates:evaluate_main"
+creatorcut-score-baselines = "creatorcut.baseline:score_main"
+creatorcut-evaluate-baselines = "creatorcut.baseline:evaluate_main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
