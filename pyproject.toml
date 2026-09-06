@@ -22,6 +22,8 @@ dev = [
 creatorcut-validate = "creatorcut.dataset:main"
 creatorcut-transcribe = "creatorcut.transcription:main"
 creatorcut-build-dataset = "creatorcut.dataset:build_dataset_main"
+creatorcut-generate-candidates = "creatorcut.candidates:generate_main"
+creatorcut-evaluate-candidates = "creatorcut.candidates:evaluate_main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

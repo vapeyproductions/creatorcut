@@ -1,0 +1,22 @@
+# Seed annotation schema
+
+`seed_labels.jsonl` contains human judgments for candidate intervals from the source-video
+manifest. Times are represented as numeric seconds and all quality scores use a 1–5 scale.
+
+| Field | Meaning |
+| --- | --- |
+| `annotation_id` | Stable label identifier |
+| `video_id` | Source-video identifier from `data/videos.json` |
+| `start_seconds` | Human-selected clip start |
+| `end_seconds` | Human-selected clip end |
+| `hook` | Opening attention strength |
+| `completeness` | Ability to stand alone without missing context |
+| `payoff` | Value, insight, surprise, emotion, or resolution delivered |
+| `clarity` | Understandability and concision |
+| `presentation` | Audio-visual suitability |
+| `technically_exportable` | Whether the interval can be rendered; not a ranking label |
+| `notes` | Concise annotation rationale |
+
+The initial professionally edited podcast videos have constant presentation and technical
+exportability values. Those fields are retained for schema continuity but excluded from the
+first content-ranking target.

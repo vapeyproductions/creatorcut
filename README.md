@@ -35,7 +35,8 @@ Rather than treating clip selection as an opaque generative-AI task, CreatorCut 
 ## Project status
 
 CreatorCut currently includes a validated seed annotation set, timestamped transcription,
-and a pipeline that joins human-scored clip intervals to their transcript text.
+a pipeline that joins human-scored intervals to transcript text, and a sentence-aligned
+candidate generator evaluated against the human selections.
 
 ## Local development
 
@@ -64,6 +65,17 @@ Join transcript text to the human-labeled intervals:
 ```bash
 creatorcut-build-dataset
 ```
+
+Generate sentence-aligned 20–60 second candidate clips and evaluate interval recall:
+
+```bash
+creatorcut-generate-candidates
+creatorcut-evaluate-candidates
+```
+
+The current seed evaluation generates 2,152 candidates across three videos and recovers
+all 17 human-selected intervals at temporal IoU ≥ 0.70. Generated media, transcripts,
+candidate records, and evaluation artifacts remain local.
 
 Run the automated checks:
 
