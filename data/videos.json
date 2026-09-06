@@ -1,0 +1,17 @@
+[
+  {
+    "video_id": "video_001",
+    "source_url": "https://www.youtube.com/watch?v=joNAzJLBO1A",
+    "local_filename": "data/raw/video_001.mp4"
+  },
+  {
+    "video_id": "video_002",
+    "source_url": "https://www.youtube.com/watch?v=hE83AqSJ8xQ",
+    "local_filename": "data/raw/video_002.mp4"
+  },
+  {
+    "video_id": "video_003",
+    "source_url": "https://www.youtube.com/watch?v=O4-oRJM_eFo",
+    "local_filename": "data/raw/video_003.mp4"
+  }
+]

@@ -34,4 +34,42 @@ Rather than treating clip selection as an opaque generative-AI task, CreatorCut 
 
 ## Project status
 
-CreatorCut is currently in the problem-definition and dataset-design phase.
+CreatorCut currently includes a validated seed annotation set, timestamped transcription,
+and a pipeline that joins human-scored clip intervals to their transcript text.
+
+## Local development
+
+CreatorCut requires Python 3.11.
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+python -m pip install -e '.[dev]'
+```
+
+Validate the source manifest and annotations:
+
+```bash
+creatorcut-validate
+```
+
+Transcribe every local source video with word-level timestamps:
+
+```bash
+creatorcut-transcribe
+```
+
+Join transcript text to the human-labeled intervals:
+
+```bash
+creatorcut-build-dataset
+```
+
+Run the automated checks:
+
+```bash
+pytest -q
+ruff check src tests
+```
+
+Raw videos, model weights, and generated transcripts are intentionally excluded from Git.
