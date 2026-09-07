@@ -151,6 +151,20 @@ paired bootstrap reports uncertainty rather than treating the 96 correlated clip
 See [docs/semantic-embedding-evaluation.md](docs/semantic-embedding-evaluation.md) for the ablation,
 per-target results, and limitations.
 
+Extract label-independent audio-delivery descriptors and run the final representation ablation:
+
+```bash
+creatorcut-extract-audio
+creatorcut-evaluate-audio
+```
+
+The audio pipeline measures energy dynamics, pauses, voice activity, zero-crossing rate, pitch
+variation, and clipping. Audio alone performs below the semantic models on this small edited-
+podcast corpus, and adding it reduces top-1 hit rate from 56.2% to 37.5%. The predeclared selection
+rule therefore keeps and freezes the text+semantic ridge model for evaluation on new videos. See
+[docs/audio-feature-ablation.md](docs/audio-feature-ablation.md) for the controlled experiment and
+[docs/frozen-model-v1.md](docs/frozen-model-v1.md) for the immutable test contract.
+
 Test whether a ranking-specific objective improves the same hybrid representation:
 
 ```bash
@@ -220,4 +234,6 @@ pytest -q
 ruff check src tests
 ```
 
-Raw videos, model weights, and generated transcripts are intentionally excluded from Git.
+Raw videos, model weights, embeddings, and generated transcripts are intentionally excluded from
+Git. Reproducible experiment definitions, tests, results, and model-selection decisions are
+versioned in the repository.
