@@ -60,6 +60,19 @@
 
         <form id="diagnosis-form">
           <fieldset>
+            <legend>Which clip would you actually choose?</legend>
+            <p class="hint">
+              This direct preference is separate from the individual 1–5 ratings.
+            </p>
+            <div class="preference-grid">
+              <label><input type="radio" name="preferred-clip" value="model_selected" required /> Model-selected clip</label>
+              <label><input type="radio" name="preferred-clip" value="human_best" required /> Higher-rated comparison</label>
+              <label><input type="radio" name="preferred-clip" value="tie" required /> Equally good</label>
+              <label><input type="radio" name="preferred-clip" value="neither" required /> Neither is publishable</label>
+            </div>
+          </fieldset>
+
+          <fieldset>
             <legend>Why was the model selection weaker?</legend>
             <p class="hint">Select every reason that materially affected the decision.</p>
             <div id="reasons" class="reason-grid"></div>

@@ -175,8 +175,8 @@ The automatic pass isolates seven misses without exposing transcripts. Across th
 human-best clip improves hook by 1.29 points on average, completeness by 1.00, clarity by 0.86,
 and payoff by 0.71. Four model selections begin with a context-dependent first word, while all
 seven appear complete under the current punctuation-only ending rule. The local comparison UI
-collects structured boundary, ad/music, duration, delivery, hook, and payoff diagnoses in a
-separate ignored file without changing the original ratings.
+collects a direct editorial preference plus structured boundary, ad/music, duration, delivery,
+hook, and payoff diagnoses in a separate ignored file without changing the original ratings.
 
 Score and evaluate the transparent ranking baselines:
 

@@ -28,6 +28,7 @@ FAILURE_REASONS = (
     "unclear_without_context",
     "other",
 )
+PREFERENCE_CHOICES = ("model_selected", "human_best", "tie", "neither")
 STATIC_DIRECTORY = Path(__file__).with_name("static")
 
 
@@ -46,6 +47,10 @@ def validate_failure_review(value: Any) -> dict[str, Any]:
     boundary_fixable = value.get("boundary_fixable")
     if not isinstance(boundary_fixable, bool):
         raise ValueError("boundary_fixable must be true or false")
+
+    preferred_clip = value.get("preferred_clip")
+    if preferred_clip not in PREFERENCE_CHOICES:
+        raise ValueError("preferred_clip must identify one comparison choice")
 
     adjustments: dict[str, float | None] = {}
     for field in ("start_adjustment_seconds", "end_adjustment_seconds"):
@@ -68,6 +73,7 @@ def validate_failure_review(value: Any) -> dict[str, Any]:
         raise ValueError("notes must be 1000 characters or fewer")
     return {
         "reasons": reasons,
+        "preferred_clip": preferred_clip,
         "boundary_fixable": boundary_fixable,
         **adjustments,
         "notes": notes,
@@ -87,7 +93,17 @@ class FailureReviewStore:
     @property
     def completed_ids(self) -> set[str]:
         with self._lock:
-            return set(self._records)
+            return {
+                analysis_id
+                for analysis_id, record in self._records.items()
+                if record.get("preferred_clip") in PREFERENCE_CHOICES
+            }
+
+    def get(self, analysis_id: str) -> dict[str, Any] | None:
+        """Return an existing diagnosis so a new preference pass can preserve it."""
+        with self._lock:
+            record = self._records.get(analysis_id)
+            return dict(record) if record else None
 
     def save(self, case: dict[str, Any], diagnosis: dict[str, Any]) -> dict[str, Any]:
         record = {
@@ -136,7 +152,10 @@ class FailureAnalysisApplication:
     def next_cases(self, limit: int = 1) -> list[dict[str, Any]]:
         completed = self.store.completed_ids
         pending = [case for case in self.cases if case["analysis_id"] not in completed]
-        return pending[: max(1, min(limit, 20))]
+        return [
+            {**case, "existing_review": self.store.get(case["analysis_id"])}
+            for case in pending[: max(1, min(limit, 20))]
+        ]
 
     def stats(self) -> dict[str, int]:
         completed = len(self.store.completed_ids & self.case_by_id.keys())

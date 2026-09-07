@@ -22,6 +22,7 @@ def case() -> dict:
 def diagnosis() -> dict:
     return {
         "reasons": ["missing_start_context", "weak_hook"],
+        "preferred_clip": "human_best",
         "boundary_fixable": True,
         "start_adjustment_seconds": -3,
         "end_adjustment_seconds": None,
@@ -40,6 +41,13 @@ def test_validate_failure_review_requires_known_reason() -> None:
     value = {**diagnosis(), "reasons": ["mystery"]}
 
     with pytest.raises(ValueError, match="unknown reason"):
+        validate_failure_review(value)
+
+
+def test_validate_failure_review_requires_pairwise_editorial_choice() -> None:
+    value = {**diagnosis(), "preferred_clip": "unknown"}
+
+    with pytest.raises(ValueError, match="preferred_clip"):
         validate_failure_review(value)
 
 
@@ -72,3 +80,25 @@ def test_failure_application_resumes_and_restricts_media(tmp_path) -> None:
     assert application.stats() == {"total": 2, "completed": 1, "remaining": 1}
     with pytest.raises(KeyError):
         application.video_path("video_unknown")
+
+
+def test_existing_diagnosis_without_preference_is_prefilled_but_incomplete(tmp_path) -> None:
+    path = tmp_path / "failure_reviews.jsonl"
+    existing = {
+        "analysis_id": case()["analysis_id"],
+        "reasons": ["weak_hook"],
+        "boundary_fixable": False,
+    }
+    path.write_text(json.dumps(existing) + "\n")
+    store = FailureReviewStore(path)
+    application = FailureAnalysisApplication(
+        [case()],
+        [{"video_id": "video_005", "local_filename": "data/raw/video_005.mp4"}],
+        store,
+        tmp_path,
+    )
+
+    pending = application.next_cases()
+
+    assert application.stats()["remaining"] == 1
+    assert pending[0]["existing_review"]["reasons"] == ["weak_hook"]

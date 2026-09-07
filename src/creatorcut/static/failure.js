@@ -67,6 +67,27 @@ function resetForm() {
   saveButton.disabled = false;
 }
 
+function prefillExistingReview(review) {
+  if (!review) return;
+  for (const reason of review.reasons || []) {
+    const input = document.querySelector(`input[name="reason"][value="${reason}"]`);
+    if (input) input.checked = true;
+  }
+  const boundary = document.querySelector(
+    `input[name="boundary-fixable"][value="${String(review.boundary_fixable)}"]`,
+  );
+  if (boundary) boundary.checked = true;
+  if (review.preferred_clip) {
+    const preferred = document.querySelector(
+      `input[name="preferred-clip"][value="${review.preferred_clip}"]`,
+    );
+    if (preferred) preferred.checked = true;
+  }
+  document.querySelector("#start-adjustment").value = review.start_adjustment_seconds ?? "";
+  document.querySelector("#end-adjustment").value = review.end_adjustment_seconds ?? "";
+  document.querySelector("#notes").value = review.notes || "";
+}
+
 function renderCase(value, stats) {
   state.currentCase = value;
   workspace.classList.remove("hidden");
@@ -75,9 +96,10 @@ function renderCase(value, stats) {
   document.querySelector("#regret").textContent = `${value.regret.toFixed(2)} rating-point regret`;
   document.querySelector("#progress-count").textContent = `${stats.completed} of ${stats.total} diagnosed`;
   document.querySelector("#progress-detail").textContent = `${stats.remaining} remaining`;
+  resetForm();
   renderClip("model", value.model_selected, value.video_id);
   renderClip("best", value.human_best, value.video_id);
-  resetForm();
+  prefillExistingReview(value.existing_review);
 }
 
 async function loadNext() {
@@ -106,6 +128,7 @@ form.addEventListener("submit", async (event) => {
   const reasons = [...document.querySelectorAll('input[name="reason"]:checked')]
     .map((input) => input.value);
   const boundary = document.querySelector('input[name="boundary-fixable"]:checked');
+  const preferred = document.querySelector('input[name="preferred-clip"]:checked');
   if (!reasons.length) {
     error.textContent = "Select at least one reason.";
     return;
@@ -114,8 +137,13 @@ form.addEventListener("submit", async (event) => {
     error.textContent = "Choose whether a boundary adjustment could rescue the clip.";
     return;
   }
+  if (!preferred) {
+    error.textContent = "Choose which clip you would actually use.";
+    return;
+  }
   const payload = {
     reasons,
+    preferred_clip: preferred.value,
     boundary_fixable: boundary.value === "true",
     start_adjustment_seconds: optionalNumber("#start-adjustment"),
     end_adjustment_seconds: optionalNumber("#end-adjustment"),
