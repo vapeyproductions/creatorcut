@@ -34,10 +34,11 @@ Rather than treating clip selection as an opaque generative-AI task, CreatorCut 
 
 ## Project status
 
-CreatorCut currently includes a validated seed annotation set, timestamped transcription,
-a pipeline that joins human-scored intervals to transcript text, and a sentence-aligned
-candidate generator evaluated against the human selections. Transparent duration-only and
-transcript-heuristic rankers establish the first ranking baselines.
+CreatorCut currently includes a 20-video source manifest, media and transcript validation,
+word-level timestamped transcription, a pipeline that joins human-scored intervals to
+transcript text, and a sentence-aligned candidate generator evaluated against the human
+selections. Transparent duration-only and transcript-heuristic rankers establish the first
+ranking baselines.
 
 ## Local development
 
@@ -55,10 +56,26 @@ Validate the source manifest and annotations:
 creatorcut-validate
 ```
 
+Inspect downloaded media before inference:
+
+```bash
+creatorcut-inspect-media data/raw/video_001.mp4
+```
+
 Transcribe every local source video with word-level timestamps:
 
 ```bash
 creatorcut-transcribe
+```
+
+CPU batching can accelerate corpus transcription. Voice-activity detection remains enabled by
+default; for a source where VAD incorrectly removes real speech, use the explicit sequential
+fallback and preserve that choice in the transcript metadata:
+
+```bash
+creatorcut-transcribe --batch-size 4
+creatorcut-transcribe --video-id video_010 --force --disable-vad
+creatorcut-validate-transcripts
 ```
 
 Join transcript text to the human-labeled intervals:
@@ -74,9 +91,10 @@ creatorcut-generate-candidates
 creatorcut-evaluate-candidates
 ```
 
-The current seed evaluation generates 2,152 candidates across three videos and recovers
-all 17 human-selected intervals at temporal IoU ≥ 0.70. Generated media, transcripts,
-candidate records, and evaluation artifacts remain local.
+The current local corpus contains approximately 5.36 hours of media and 56,534 timestamped
+words. Candidate generation produces 13,934 sentence-aligned intervals across 20 videos and
+recovers all 17 human-selected seed intervals at temporal IoU ≥ 0.70. Generated media,
+transcripts, candidate records, and evaluation artifacts remain local.
 
 Score and evaluate the transparent ranking baselines:
 

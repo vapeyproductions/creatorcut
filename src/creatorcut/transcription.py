@@ -35,23 +35,28 @@ def serialize_segment(segment: Any) -> dict[str, Any]:
 
 
 def transcribe_video(
-    model: Any,
+    transcriber: Any,
     video_id: str,
     video_path: Path,
     output_path: Path,
     model_name: str,
     compute_type: str,
+    batch_size: int,
+    vad_filter: bool,
 ) -> dict[str, Any]:
     """Transcribe one video and persist segment- and word-level timestamps."""
     started_at = time.monotonic()
-    segment_generator, info = model.transcribe(
-        str(video_path),
-        language="en",
-        beam_size=5,
-        word_timestamps=True,
-        vad_filter=True,
-        vad_parameters={"min_silence_duration_ms": 500},
-    )
+    transcription_options = {
+        "language": "en",
+        "beam_size": 5,
+        "word_timestamps": True,
+        "vad_filter": vad_filter,
+    }
+    if vad_filter:
+        transcription_options["vad_parameters"] = {"min_silence_duration_ms": 500}
+    if batch_size > 1:
+        transcription_options["batch_size"] = batch_size
+    segment_generator, info = transcriber.transcribe(str(video_path), **transcription_options)
     segments = [serialize_segment(segment) for segment in segment_generator]
     transcript = {
         "schema_version": 1,
@@ -64,7 +69,9 @@ def transcribe_video(
             "device": "cpu",
             "compute_type": compute_type,
             "beam_size": 5,
-            "vad_filter": True,
+            "batch_size": batch_size,
+            "inference_mode": "batched" if batch_size > 1 else "sequential",
+            "vad_filter": vad_filter,
         },
         "language": info.language,
         "language_probability": info.language_probability,
@@ -86,13 +93,25 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Transcribe CreatorCut source videos")
     parser.add_argument("--manifest", type=Path, default=Path("data/videos.json"))
     parser.add_argument("--output-dir", type=Path, default=Path("data/processed/transcripts"))
+    parser.add_argument(
+        "--media-dir",
+        type=Path,
+        help="Optional local directory containing files named like the manifest entries",
+    )
     parser.add_argument("--model", default="small.en")
     parser.add_argument("--compute-type", default="int8")
+    parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--cpu-threads", type=int, default=0)
+    parser.add_argument(
+        "--disable-vad",
+        action="store_true",
+        help="Decode the full audio track; requires --batch-size 1",
+    )
     parser.add_argument("--video-id", action="append", dest="video_ids")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
-    from faster_whisper import WhisperModel
+    from faster_whisper import BatchedInferencePipeline, WhisperModel
 
     manifest = load_manifest(args.manifest)
     selected = [
@@ -100,6 +119,8 @@ def main() -> None:
     ]
     if not selected:
         raise SystemExit("No manifest videos matched --video-id")
+    if args.disable_vad and args.batch_size > 1:
+        raise SystemExit("--disable-vad requires --batch-size 1 for long-form audio")
 
     model_cache = Path("artifacts/models")
     print(f"Loading {args.model} on CPU with {args.compute_type} compute")
@@ -108,11 +129,16 @@ def main() -> None:
         device="cpu",
         compute_type=args.compute_type,
         download_root=str(model_cache),
+        cpu_threads=args.cpu_threads,
     )
+    transcriber = BatchedInferencePipeline(model=model) if args.batch_size > 1 else model
 
     for item in selected:
         video_id = item["video_id"]
-        video_path = Path(item["local_filename"])
+        manifest_video_path = Path(item["local_filename"])
+        video_path = (
+            args.media_dir / manifest_video_path.name if args.media_dir else manifest_video_path
+        )
         output_path = args.output_dir / f"{video_id}.json"
         if output_path.exists() and not args.force:
             print(f"Skipping {video_id}; {output_path} already exists")
@@ -120,12 +146,14 @@ def main() -> None:
 
         print(f"Transcribing {video_id} from {video_path}")
         result = transcribe_video(
-            model,
+            transcriber,
             video_id,
             video_path,
             output_path,
             args.model,
             args.compute_type,
+            args.batch_size,
+            not args.disable_vad,
         )
         word_count = sum(len(segment["words"]) for segment in result["segments"])
         print(

@@ -9,6 +9,7 @@ description = "Explainable multimodal ranking for creator video clips"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
+  "av>=18,<19",
   "faster-whisper==1.2.1",
 ]
 
@@ -21,11 +22,13 @@ dev = [
 [project.scripts]
 creatorcut-validate = "creatorcut.dataset:main"
 creatorcut-transcribe = "creatorcut.transcription:main"
+creatorcut-validate-transcripts = "creatorcut.transcript_validation:main"
 creatorcut-build-dataset = "creatorcut.dataset:build_dataset_main"
 creatorcut-generate-candidates = "creatorcut.candidates:generate_main"
 creatorcut-evaluate-candidates = "creatorcut.candidates:evaluate_main"
 creatorcut-score-baselines = "creatorcut.baseline:score_main"
 creatorcut-evaluate-baselines = "creatorcut.baseline:evaluate_main"
+creatorcut-inspect-media = "creatorcut.media:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
