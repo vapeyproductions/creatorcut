@@ -102,6 +102,16 @@ current clean corpus creates a deterministic 96-clip review queue balanced acros
 and high heuristic-score bands. Proxy scores are hidden during human review and are never
 treated as ground-truth labels.
 
+Launch the private Annotation Studio and review the next ten clips:
+
+```bash
+creatorcut-annotate --media-dir /path/to/downloaded/videos --batch-size 10
+```
+
+The local interface streams only manifest-declared videos, pauses playback at the sampled clip
+boundary, hides all proxy-score metadata, and resumes after restarts. Reviews are saved atomically
+to `data/processed/annotation_reviews.jsonl`, which remains excluded from Git.
+
 Score and evaluate the transparent ranking baselines:
 
 ```bash

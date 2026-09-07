@@ -34,3 +34,8 @@ The proxy score is used only to stratify the sample. It is not a training label,
 interfaces should hide the `sampling` object from reviewers to avoid anchoring their judgments.
 The empty `labels` object is filled during review, then converted into the flat annotation schema
 above before model training.
+
+`creatorcut-annotate` serves the next unfinished batch in a private local browser interface and
+saves completed records to `data/processed/annotation_reviews.jsonl`. Reviewers score hook,
+completeness, payoff, and clarity. `presentation` is written as 5 for this professionally edited
+corpus, while the technical-export gate defaults to true unless the reviewer marks an issue.

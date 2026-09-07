@@ -90,3 +90,21 @@ def test_build_annotation_queue_excludes_quality_warning_videos():
     )
 
     assert {item["video_id"] for item in queue} == {"video_005"}
+
+
+def test_build_annotation_queue_interleaves_videos():
+    candidates = [
+        *[scored_candidate(index, "video_004") for index in range(12)],
+        *[scored_candidate(index, "video_005") for index in range(12)],
+    ]
+    for candidate in candidates:
+        candidate.pop("transcript_heuristic_score")
+
+    queue = build_annotation_queue(candidates, annotations=[], samples_per_video=6)
+
+    assert [item["video_id"] for item in queue[:4]] == [
+        "video_004",
+        "video_005",
+        "video_004",
+        "video_005",
+    ]

@@ -134,18 +134,22 @@ def build_annotation_queue(
         if candidate["video_id"] not in unavailable_video_ids:
             candidates_by_video[candidate["video_id"]].append(candidate)
 
-    queue: list[dict[str, Any]] = []
+    sampled_by_video: dict[str, list[dict[str, Any]]] = {}
     for video_id in sorted(candidates_by_video):
-        sampled = sample_video_candidates(
+        sampled_by_video[video_id] = sample_video_candidates(
             candidates_by_video[video_id],
             samples_per_video=samples_per_video,
             seed=seed,
             maximum_overlap_iou=maximum_overlap_iou,
         )
-        for index, candidate in enumerate(sampled, start=1):
+
+    queue: list[dict[str, Any]] = []
+    for index in range(samples_per_video):
+        for video_id, sampled in sampled_by_video.items():
+            candidate = sampled[index]
             queue.append(
                 {
-                    "annotation_id": f"{video_id}_sample_{index:02d}",
+                    "annotation_id": f"{video_id}_sample_{index + 1:02d}",
                     "candidate_id": candidate["candidate_id"],
                     "video_id": video_id,
                     "start_seconds": candidate["start_seconds"],

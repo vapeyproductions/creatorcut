@@ -27,6 +27,7 @@ creatorcut-build-dataset = "creatorcut.dataset:build_dataset_main"
 creatorcut-generate-candidates = "creatorcut.candidates:generate_main"
 creatorcut-evaluate-candidates = "creatorcut.candidates:evaluate_main"
 creatorcut-sample-annotations = "creatorcut.sampling:main"
+creatorcut-annotate = "creatorcut.annotation_app:main"
 creatorcut-score-baselines = "creatorcut.baseline:score_main"
 creatorcut-evaluate-baselines = "creatorcut.baseline:evaluate_main"
 creatorcut-inspect-media = "creatorcut.media:main"
@@ -36,6 +37,9 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+creatorcut = ["static/*.html", "static/*.css", "static/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

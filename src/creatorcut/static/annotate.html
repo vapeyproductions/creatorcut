@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>CreatorCut Annotation Studio</title>
+    <meta
+      name="description"
+      content="A private, focused workspace for scoring CreatorCut clip candidates."
+    />
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="CreatorCut annotation home">
+        <span class="brand-mark" aria-hidden="true">CC</span>
+        <span>
+          <strong>CreatorCut</strong>
+          <small>Annotation Studio</small>
+        </span>
+      </a>
+      <div class="overall-progress" aria-label="Overall annotation progress">
+        <span id="overall-count">0 of 96 reviewed</span>
+        <div class="progress-track" aria-hidden="true">
+          <span id="overall-progress-bar"></span>
+        </div>
+      </div>
+      <span class="private-badge"><span></span> Local & private</span>
+    </header>
+
+    <main class="page-shell">
+      <section id="loading-state" class="state-card">
+        <div class="loading-orbit" aria-hidden="true"></div>
+        <h1>Preparing your review batch</h1>
+        <p>Loading ten blind clip candidates from the local queue.</p>
+      </section>
+
+      <section id="error-state" class="state-card" hidden>
+        <span class="state-kicker">Couldn’t load the queue</span>
+        <h1>Annotation Studio needs attention</h1>
+        <p id="fatal-error"></p>
+        <button id="retry-button" class="button button-primary" type="button">Try again</button>
+      </section>
+
+      <section id="complete-state" class="state-card complete-card" hidden>
+        <span class="complete-check" aria-hidden="true">✓</span>
+        <span class="state-kicker">Batch complete</span>
+        <h1>Nice work. Your judgments are saved.</h1>
+        <p id="complete-message"></p>
+        <button id="next-batch-button" class="button button-primary" type="button">
+          Load the next batch
+        </button>
+      </section>
+
+      <section id="workspace" class="workspace" hidden>
+        <div class="workspace-heading">
+          <div>
+            <span class="eyebrow">Blind human review</span>
+            <h1>Does this clip earn attention?</h1>
+          </div>
+          <div class="batch-counter">
+            <span>Current batch</span>
+            <strong><span id="batch-index">1</span> / <span id="batch-total">10</span></strong>
+          </div>
+        </div>
+
+        <div class="review-grid">
+          <section class="media-column" aria-labelledby="clip-heading">
+            <div class="clip-header">
+              <div>
+                <span id="video-id" class="clip-id">VIDEO_005</span>
+                <h2 id="clip-heading">Candidate clip</h2>
+              </div>
+              <span id="clip-duration" class="duration-badge">00:40</span>
+            </div>
+
+            <div class="video-shell">
+              <video id="clip-video" preload="metadata" playsinline controls></video>
+              <div id="video-loading" class="video-loading">Loading local video…</div>
+            </div>
+
+            <div class="playback-bar">
+              <button id="replay-button" class="icon-button" type="button">
+                <span aria-hidden="true">↺</span> Replay clip
+              </button>
+              <span id="clip-range" class="time-range">00:00 → 00:40</span>
+              <span class="keyboard-hint"><kbd>R</kbd> replay · <kbd>Space</kbd> play/pause</span>
+            </div>
+
+            <article class="transcript-card">
+              <div class="transcript-heading">
+                <span>Transcript</span>
+                <span>ASR reference</span>
+              </div>
+              <p id="transcript-text"></p>
+            </article>
+          </section>
+
+          <aside class="score-panel" aria-labelledby="score-heading">
+            <div class="panel-heading">
+              <span class="eyebrow">Your judgment</span>
+              <h2 id="score-heading">Score what you actually see</h2>
+              <p>The model’s opinion is hidden. Use the full 1–5 range.</p>
+            </div>
+
+            <form id="review-form" novalidate>
+              <div class="score-field" data-field="hook">
+                <div class="field-copy">
+                  <label>Hook</label>
+                  <span>Does the opening make you want to keep watching?</span>
+                </div>
+                <div class="score-group" role="radiogroup" aria-label="Hook score"></div>
+              </div>
+
+              <div class="score-field" data-field="completeness">
+                <div class="field-copy">
+                  <label>Completeness</label>
+                  <span>Can the clip stand alone without missing context?</span>
+                </div>
+                <div class="score-group" role="radiogroup" aria-label="Completeness score"></div>
+              </div>
+
+              <div class="score-field" data-field="payoff">
+                <div class="field-copy">
+                  <label>Payoff</label>
+                  <span>Does it deliver insight, emotion, or resolution?</span>
+                </div>
+                <div class="score-group" role="radiogroup" aria-label="Payoff score"></div>
+              </div>
+
+              <div class="score-field" data-field="clarity">
+                <div class="field-copy">
+                  <label>Clarity</label>
+                  <span>Is the message easy to understand and follow?</span>
+                </div>
+                <div class="score-group" role="radiogroup" aria-label="Clarity score"></div>
+              </div>
+
+              <div class="scale-caption" aria-hidden="true">
+                <span>1 · weak</span>
+                <span>5 · exceptional</span>
+              </div>
+
+              <label class="technical-toggle">
+                <input id="technical-issue" type="checkbox" />
+                <span class="toggle-box" aria-hidden="true"></span>
+                <span>
+                  <strong>Technical issue</strong>
+                  <small>Check only if this interval cannot be exported cleanly.</small>
+                </span>
+              </label>
+
+              <label class="notes-field" for="notes">
+                <span>Notes <small>optional</small></span>
+                <textarea
+                  id="notes"
+                  maxlength="1000"
+                  rows="3"
+                  placeholder="What made this clip work—or fall apart?"
+                ></textarea>
+              </label>
+
+              <p id="form-error" class="form-error" role="alert" hidden></p>
+
+              <div class="form-actions">
+                <button id="skip-button" class="button button-secondary" type="button">
+                  Skip for now
+                </button>
+                <button id="save-button" class="button button-primary" type="submit">
+                  Save & next <span aria-hidden="true">→</span>
+                </button>
+              </div>
+            </form>
+          </aside>
+        </div>
+      </section>
+    </main>
+
+    <script src="/assets/app.js" defer></script>
+  </body>
+</html>
