@@ -29,6 +29,7 @@ FAILURE_REASONS = (
     "other",
 )
 PREFERENCE_CHOICES = ("model_selected", "human_best", "tie", "neither")
+PREFERENCE_CONTEXT = "after_proposed_model_edits"
 STATIC_DIRECTORY = Path(__file__).with_name("static")
 
 
@@ -74,6 +75,7 @@ def validate_failure_review(value: Any) -> dict[str, Any]:
     return {
         "reasons": reasons,
         "preferred_clip": preferred_clip,
+        "preference_context": PREFERENCE_CONTEXT,
         "boundary_fixable": boundary_fixable,
         **adjustments,
         "notes": notes,

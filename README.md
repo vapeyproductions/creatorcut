@@ -175,8 +175,15 @@ The automatic pass isolates seven misses without exposing transcripts. Across th
 human-best clip improves hook by 1.29 points on average, completeness by 1.00, clarity by 0.86,
 and payoff by 0.71. Four model selections begin with a context-dependent first word, while all
 seven appear complete under the current punctuation-only ending rule. The local comparison UI
-collects a direct editorial preference plus structured boundary, ad/music, duration, delivery,
+collects a conditional editorial preference—which option wins after the proposed boundary edits
+are applied to the model-selected clip—plus structured boundary, ad/music, duration, delivery,
 hook, and payoff diagnoses in a separate ignored file without changing the original ratings.
+
+In the first manual review, the model-selected moment was preferred in six of seven failures only
+after proposed edits; five of those six included an explicit timestamp correction. The remaining
+case favored the comparison clip. These are therefore counterfactual editing labels, not evidence
+of 6/7 raw ranking accuracy. The result motivates a two-stage design: rank promising moments, then
+refine their start and end boundaries before the final editorial comparison.
 
 Score and evaluate the transparent ranking baselines:
 

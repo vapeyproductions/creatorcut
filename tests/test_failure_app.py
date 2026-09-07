@@ -33,6 +33,7 @@ def diagnosis() -> dict:
 def test_validate_failure_review_accepts_structured_diagnosis() -> None:
     assert validate_failure_review(diagnosis()) == {
         **diagnosis(),
+        "preference_context": "after_proposed_model_edits",
         "start_adjustment_seconds": -3.0,
     }
 
@@ -49,6 +50,12 @@ def test_validate_failure_review_requires_pairwise_editorial_choice() -> None:
 
     with pytest.raises(ValueError, match="preferred_clip"):
         validate_failure_review(value)
+
+
+def test_validate_failure_review_records_conditional_preference_context() -> None:
+    value = validate_failure_review(diagnosis())
+
+    assert value["preference_context"] == "after_proposed_model_edits"
 
 
 def test_failure_store_replaces_diagnosis_atomically(tmp_path) -> None:
