@@ -35,6 +35,7 @@ h2 { margin-top: 8px; }
 .progress span { color: var(--muted); margin-top: 4px; font-size: 0.85rem; }
 .hidden { display: none !important; }
 .complete { padding: 40px; background: var(--surface); border: 1px solid var(--line); border-radius: 20px; }
+.secondary-action { border: 1px solid var(--line); border-radius: 10px; padding: 11px 14px; background: var(--surface-strong); color: var(--text); font-weight: 750; cursor: pointer; }
 
 .case-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 16px; }
 .pill, .regret { display: inline-block; padding: 7px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 750; }
@@ -64,6 +65,28 @@ legend, .notes-label { font-weight: 800; font-size: 1.05rem; }
 .reason-option, .radio-row label, .preference-grid label { display: flex; gap: 8px; align-items: center; padding: 12px; background: var(--surface-strong); border: 1px solid var(--line); border-radius: 11px; cursor: pointer; }
 input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .radio-row { display: flex; gap: 10px; margin-top: 12px; }
+.boundary-editor { margin-top: 16px; padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: #0d0f16; }
+.timeline { position: relative; height: 42px; margin: 2px 10px 0; }
+.timeline-rail, .timeline-selection { position: absolute; top: 17px; height: 8px; border-radius: 999px; }
+.timeline-rail { left: 0; right: 0; background: var(--line); }
+.timeline-selection { background: linear-gradient(90deg, var(--model), var(--accent)); }
+.timeline-range { position: absolute; inset: 0; width: 100%; height: 42px; margin: 0; appearance: none; -webkit-appearance: none; background: transparent; pointer-events: none; }
+.start-range { z-index: 3; }
+.end-range { z-index: 2; }
+.timeline-range::-webkit-slider-runnable-track { height: 8px; background: transparent; }
+.timeline-range::-webkit-slider-thumb { width: 22px; height: 30px; margin-top: -11px; appearance: none; -webkit-appearance: none; border: 3px solid #0d0f16; border-radius: 8px; background: var(--text); box-shadow: 0 0 0 2px var(--accent); cursor: ew-resize; pointer-events: auto; }
+.timeline-range::-moz-range-track { height: 8px; background: transparent; }
+.timeline-range::-moz-range-thumb { width: 18px; height: 26px; border: 3px solid #0d0f16; border-radius: 8px; background: var(--text); box-shadow: 0 0 0 2px var(--accent); cursor: ew-resize; pointer-events: auto; }
+.timeline-labels { display: flex; justify-content: space-between; color: var(--muted); font-size: 0.75rem; }
+.boundary-readouts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 18px; }
+.boundary-readout { display: grid; gap: 5px; min-height: 116px; padding: 13px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); }
+.boundary-name { color: var(--muted); font-size: 0.68rem; font-weight: 850; letter-spacing: 0.12em; }
+.boundary-readout strong { font-size: 1.35rem; font-variant-numeric: tabular-nums; }
+.boundary-delta { color: var(--accent); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.nudge-row { display: flex; gap: 6px; align-self: end; }
+.nudge-row button, .editor-actions button { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--surface-strong); color: var(--text); cursor: pointer; font-weight: 750; }
+.editor-actions { display: flex; gap: 8px; margin-top: 12px; }
+.editor-actions .preview-adjusted { border-color: var(--accent); color: var(--accent); }
 .adjustments { display: grid; grid-template-columns: repeat(2, minmax(0, 240px)); gap: 12px; margin-top: 12px; }
 .adjustments label { color: var(--muted); font-size: 0.84rem; }
 input[type="number"], textarea { width: 100%; margin-top: 7px; padding: 11px; color: var(--text); background: #0d0f16; border: 1px solid var(--line); border-radius: 10px; }
@@ -81,5 +104,6 @@ textarea { display: block; resize: vertical; }
 }
 
 @media (max-width: 520px) {
-  .reason-grid, .preference-grid, .adjustments { grid-template-columns: 1fr; }
+  .reason-grid, .preference-grid, .adjustments, .boundary-readouts { grid-template-columns: 1fr; }
+  .editor-actions { display: grid; }
 }

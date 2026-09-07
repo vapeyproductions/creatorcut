@@ -27,6 +27,9 @@
         <p class="eyebrow">REVIEW COMPLETE</p>
         <h2>All ranking mistakes are diagnosed.</h2>
         <p>The structured reasons are saved locally and remain outside Git.</p>
+        <button id="edit-completed" class="secondary-action" type="button">
+          Review or adjust saved labels
+        </button>
       </section>
 
       <section id="workspace" class="hidden">
@@ -42,7 +45,7 @@
           <article class="clip-card model-card">
             <div class="card-label">MODEL SELECTED</div>
             <video id="model-video" controls preload="metadata"></video>
-            <button class="replay" type="button" data-video="model-video">Replay exact interval</button>
+            <button class="replay" type="button" data-video="model-video">Replay current interval</button>
             <div id="model-meta" class="clip-meta"></div>
             <div id="model-scores" class="scores"></div>
             <p id="model-transcript" class="transcript"></p>
@@ -85,14 +88,75 @@
               <label><input type="radio" name="boundary-fixable" value="true" required /> Yes</label>
               <label><input type="radio" name="boundary-fixable" value="false" required /> No</label>
             </div>
-            <p class="hint">Optional: negative means earlier; positive means later.</p>
+            <p class="hint">
+              Drag either edge of the highlighted clip. The video seeks to that edge when you
+              release it. Use the buttons for exact 0.1-second changes.
+            </p>
+            <div id="boundary-editor" class="boundary-editor">
+              <div class="timeline" aria-label="Adjust the model clip start and end">
+                <div class="timeline-rail"></div>
+                <div id="timeline-selection" class="timeline-selection"></div>
+                <input
+                  id="start-handle"
+                  class="timeline-range start-range"
+                  type="range"
+                  step="0.1"
+                  aria-label="Adjusted clip start"
+                />
+                <input
+                  id="end-handle"
+                  class="timeline-range end-range"
+                  type="range"
+                  step="0.1"
+                  aria-label="Adjusted clip end"
+                />
+              </div>
+              <div class="timeline-labels" aria-hidden="true">
+                <span id="window-start"></span>
+                <span id="window-end"></span>
+              </div>
+              <div class="boundary-readouts">
+                <section class="boundary-readout">
+                  <span class="boundary-name">START</span>
+                  <strong id="adjusted-start-time"></strong>
+                  <span id="start-delta" class="boundary-delta"></span>
+                  <div class="nudge-row">
+                    <button type="button" data-nudge="start" data-delta="-0.1">−0.1s</button>
+                    <button type="button" data-nudge="start" data-delta="0.1">+0.1s</button>
+                  </div>
+                </section>
+                <section class="boundary-readout">
+                  <span class="boundary-name">END</span>
+                  <strong id="adjusted-end-time"></strong>
+                  <span id="end-delta" class="boundary-delta"></span>
+                  <div class="nudge-row">
+                    <button type="button" data-nudge="end" data-delta="-0.1">−0.1s</button>
+                    <button type="button" data-nudge="end" data-delta="0.1">+0.1s</button>
+                  </div>
+                </section>
+                <section class="boundary-readout duration-readout">
+                  <span class="boundary-name">DURATION</span>
+                  <strong id="adjusted-duration"></strong>
+                  <span id="preview-position" class="boundary-delta">Ready to preview</span>
+                </section>
+              </div>
+              <div class="editor-actions">
+                <button id="preview-adjusted" class="preview-adjusted" type="button">
+                  Preview adjusted clip
+                </button>
+                <button id="reset-boundaries" class="secondary-action" type="button">
+                  Reset to original
+                </button>
+              </div>
+            </div>
+            <p class="hint">Negative changes move earlier; positive changes move later.</p>
             <div class="adjustments">
               <label>
-                Move start by seconds
+                Exact start change (seconds)
                 <input id="start-adjustment" type="number" min="-30" max="30" step="0.1" />
               </label>
               <label>
-                Move end by seconds
+                Exact end change (seconds)
                 <input id="end-adjustment" type="number" min="-30" max="30" step="0.1" />
               </label>
             </div>

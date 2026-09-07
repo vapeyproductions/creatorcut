@@ -151,9 +151,15 @@ class FailureAnalysisApplication:
             for item in manifest
         }
 
-    def next_cases(self, limit: int = 1) -> list[dict[str, Any]]:
+    def next_cases(
+        self, limit: int = 1, include_completed: bool = False
+    ) -> list[dict[str, Any]]:
         completed = self.store.completed_ids
-        pending = [case for case in self.cases if case["analysis_id"] not in completed]
+        pending = (
+            self.cases
+            if include_completed
+            else [case for case in self.cases if case["analysis_id"] not in completed]
+        )
         return [
             {**case, "existing_review": self.store.get(case["analysis_id"])}
             for case in pending[: max(1, min(limit, 20))]
@@ -171,7 +177,17 @@ class FailureAnalysisApplication:
         case = self.case_by_id.get(analysis_id)
         if case is None:
             raise KeyError(analysis_id)
-        return self.store.save(case, validate_failure_review(value))
+        diagnosis = validate_failure_review(value)
+        selected = case["model_selected"]
+        adjusted_start = float(selected["start_seconds"]) + (
+            diagnosis["start_adjustment_seconds"] or 0.0
+        )
+        adjusted_end = float(selected["end_seconds"]) + (
+            diagnosis["end_adjustment_seconds"] or 0.0
+        )
+        if adjusted_start < 0 or adjusted_end <= adjusted_start:
+            raise ValueError("Adjusted clip boundaries must define a positive interval")
+        return self.store.save(case, diagnosis)
 
     def video_path(self, video_id: str) -> Path:
         path = self.video_paths.get(video_id)
@@ -235,8 +251,16 @@ def create_handler(application: FailureAnalysisApplication) -> type[BaseHTTPRequ
                 except ValueError:
                     self._send_json({"error": "limit must be an integer"}, HTTPStatus.BAD_REQUEST)
                     return
+                include_completed = values.get("include_completed", ["false"])[0].lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                }
                 self._send_json(
-                    {"cases": application.next_cases(limit), "stats": application.stats()},
+                    {
+                        "cases": application.next_cases(limit, include_completed),
+                        "stats": application.stats(),
+                    },
                     send_body=send_body,
                 )
                 return
@@ -302,7 +326,10 @@ def create_handler(application: FailureAnalysisApplication) -> type[BaseHTTPRequ
                     chunk = stream.read(min(1024 * 1024, remaining))
                     if not chunk:
                         break
-                    self.wfile.write(chunk)
+                    try:
+                        self.wfile.write(chunk)
+                    except (BrokenPipeError, ConnectionResetError):
+                        break
                     remaining -= len(chunk)
 
         def _send_json(

@@ -178,6 +178,8 @@ seven appear complete under the current punctuation-only ending rule. The local 
 collects a conditional editorial preference—which option wins after the proposed boundary edits
 are applied to the model-selected clip—plus structured boundary, ad/music, duration, delivery,
 hook, and payoff diagnoses in a separate ignored file without changing the original ratings.
+Its dual-handle timeline supports 0.1-second nudges, immediate adjusted-interval playback, and
+reopening completed reviews so timestamp labels are observed rather than guessed.
 
 In the first manual review, the model-selected moment was preferred in six of seven failures only
 after proposed edits; five of those six included an explicit timestamp correction. The remaining

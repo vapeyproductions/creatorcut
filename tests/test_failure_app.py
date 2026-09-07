@@ -14,7 +14,11 @@ def case() -> dict:
         "analysis_id": "video_005_top1_failure",
         "video_id": "video_005",
         "regret": 1.0,
-        "model_selected": {"annotation_id": "selected"},
+        "model_selected": {
+            "annotation_id": "selected",
+            "start_seconds": 10.0,
+            "end_seconds": 20.0,
+        },
         "human_best": {"annotation_id": "best"},
     }
 
@@ -84,6 +88,7 @@ def test_failure_application_resumes_and_restricts_media(tmp_path) -> None:
     assert len(application.next_cases()) == 1
     application.save_review(case()["analysis_id"], diagnosis())
     assert application.next_cases()[0]["analysis_id"] == "video_005_second"
+    assert len(application.next_cases(limit=2, include_completed=True)) == 2
     assert application.stats() == {"total": 2, "completed": 1, "remaining": 1}
     with pytest.raises(KeyError):
         application.video_path("video_unknown")
@@ -109,3 +114,21 @@ def test_existing_diagnosis_without_preference_is_prefilled_but_incomplete(tmp_p
 
     assert application.stats()["remaining"] == 1
     assert pending[0]["existing_review"]["reasons"] == ["weak_hook"]
+
+
+def test_failure_application_rejects_invalid_adjusted_interval(tmp_path) -> None:
+    store = FailureReviewStore(tmp_path / "failure_reviews.jsonl")
+    application = FailureAnalysisApplication(
+        [case()],
+        [{"video_id": "video_005", "local_filename": "data/raw/video_005.mp4"}],
+        store,
+        tmp_path,
+    )
+    invalid = {
+        **diagnosis(),
+        "start_adjustment_seconds": 15.0,
+        "end_adjustment_seconds": None,
+    }
+
+    with pytest.raises(ValueError, match="positive interval"):
+        application.save_review(case()["analysis_id"], invalid)
