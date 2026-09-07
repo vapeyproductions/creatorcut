@@ -20,3 +20,17 @@ manifest. Times are represented as numeric seconds and all quality scores use a 
 The initial professionally edited podcast videos have constant presentation and technical
 exportability values. Those fields are retained for schema continuity but excluded from the
 first content-ranking target.
+
+## Sampled review queue
+
+`creatorcut-sample-annotations` creates a local `data/processed/annotation_queue.jsonl` file.
+It excludes videos that already have labels or transcript-quality warnings and samples six
+candidates from each remaining video: two from each low, medium, and high
+transcript-heuristic score band. Temporal spreading, duration targets, and interval-overlap
+suppression reduce near-duplicate review tasks. Warned transcripts can be included deliberately
+with `--include-warned-transcripts` after manual review or improved transcription.
+
+The proxy score is used only to stratify the sample. It is not a training label, and annotation
+interfaces should hide the `sampling` object from reviewers to avoid anchoring their judgments.
+The empty `labels` object is filled during review, then converted into the flat annotation schema
+above before model training.

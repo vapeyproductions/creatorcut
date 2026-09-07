@@ -89,12 +89,18 @@ Generate sentence-aligned 20–60 second candidate clips and evaluate interval r
 ```bash
 creatorcut-generate-candidates
 creatorcut-evaluate-candidates
+creatorcut-sample-annotations
 ```
 
 The current local corpus contains approximately 5.36 hours of media and 56,534 timestamped
 words. Candidate generation produces 13,934 sentence-aligned intervals across 20 videos and
 recovers all 17 human-selected seed intervals at temporal IoU ≥ 0.70. Generated media,
 transcripts, candidate records, and evaluation artifacts remain local.
+
+The annotation sampler excludes already labeled videos and transcript-quality warnings. The
+current clean corpus creates a deterministic 96-clip review queue balanced across low, medium,
+and high heuristic-score bands. Proxy scores are hidden during human review and are never
+treated as ground-truth labels.
 
 Score and evaluate the transparent ranking baselines:
 
