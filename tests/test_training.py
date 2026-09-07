@@ -5,6 +5,7 @@ from creatorcut.training import (
     build_group_folds,
     build_reviewed_training_records,
     cross_validate_ridge,
+    paired_video_bootstrap,
     ranking_metrics,
 )
 
@@ -126,3 +127,18 @@ def test_ranking_metrics_awards_tied_prediction_half_credit() -> None:
 
     assert result["pairwise_accuracy"] == pytest.approx(0.5)
     assert result["comparable_pairs"] == 1
+
+
+def test_paired_video_bootstrap_resamples_whole_groups() -> None:
+    records = [{"video_id": f"video_{index // 3}"} for index in range(12)]
+    actual = [1.0, 2.0, 3.0] * 4
+    reference = [3.0, 2.0, 1.0] * 4
+    challenger = actual.copy()
+
+    result = paired_video_bootstrap(
+        records, actual, reference, challenger, iterations=100, seed=42
+    )
+
+    comparisons = result["challenger_minus_reference"]
+    assert comparisons["pairwise_accuracy_delta"]["estimate"] == pytest.approx(1.0)
+    assert comparisons["top_1_hit_rate_delta"]["bootstrap_probability_improved"] == 1.0

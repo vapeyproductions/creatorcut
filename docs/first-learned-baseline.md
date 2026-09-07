@@ -86,6 +86,10 @@ whether the message delivers a meaningful conclusion. The result motivates seman
 representations and boundary-context features while leaving a reproducible baseline they must
 beat.
 
+The controlled follow-up in
+[semantic-embedding-evaluation.md](semantic-embedding-evaluation.md) tests that representation
+change on the same grouped folds.
+
 Coefficient magnitudes are exploratory rather than causal. With 96 examples and correlated
 features, they should be used for debugging hypotheses, not broad claims about audience
 behavior. The labels also come from one reviewer, so they represent a consistent editorial

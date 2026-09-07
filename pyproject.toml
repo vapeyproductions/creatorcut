@@ -19,6 +19,11 @@ dev = [
   "pytest>=8,<10",
   "ruff>=0.11,<1",
 ]
+semantic = [
+  "huggingface-hub>=0.34,<2",
+  "onnxruntime>=1.22,<2",
+  "tokenizers>=0.21,<1",
+]
 
 [project.scripts]
 creatorcut-validate = "creatorcut.dataset:main"
@@ -33,6 +38,8 @@ creatorcut-score-baselines = "creatorcut.baseline:score_main"
 creatorcut-evaluate-baselines = "creatorcut.baseline:evaluate_main"
 creatorcut-build-training-data = "creatorcut.training:build_main"
 creatorcut-train-ridge = "creatorcut.training:train_main"
+creatorcut-encode-transcripts = "creatorcut.semantic:encode_main"
+creatorcut-evaluate-semantic = "creatorcut.semantic:evaluate_main"
 creatorcut-inspect-media = "creatorcut.media:main"
 
 [tool.setuptools]

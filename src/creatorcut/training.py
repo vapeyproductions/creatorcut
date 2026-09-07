@@ -196,10 +196,22 @@ def _fit_ridge(
     scales = features.std(axis=0)
     scales[scales < 1e-12] = 1.0
     standardized = (features - means) / scales
-    design = np.column_stack([np.ones(len(standardized)), standardized])
-    penalty = np.eye(design.shape[1]) * alpha
-    penalty[0, 0] = 0.0
-    coefficients = np.linalg.pinv(design.T @ design + penalty) @ design.T @ targets
+    target_means = targets.mean(axis=0)
+    centered_targets = targets - target_means
+    feature_count = standardized.shape[1]
+    if alpha == 0:
+        weights = np.linalg.pinv(standardized) @ centered_targets
+    elif feature_count <= len(standardized):
+        weights = np.linalg.solve(
+            standardized.T @ standardized + np.eye(feature_count) * alpha,
+            standardized.T @ centered_targets,
+        )
+    else:
+        weights = standardized.T @ np.linalg.solve(
+            standardized @ standardized.T + np.eye(len(standardized)) * alpha,
+            centered_targets,
+        )
+    coefficients = np.vstack([target_means, weights])
     return {"feature_means": means, "feature_scales": scales, "coefficients": coefficients}
 
 
@@ -261,12 +273,107 @@ def ranking_metrics(
     }
 
 
-def _model_to_json(model: dict[str, np.ndarray]) -> dict[str, Any]:
+def paired_video_bootstrap(
+    records: list[dict[str, Any]],
+    actual: list[float],
+    reference: list[float],
+    challenger: list[float],
+    iterations: int = 10_000,
+    seed: int = 42,
+) -> dict[str, Any]:
+    """Estimate paired metric differences by resampling whole videos."""
+    vector_lengths = {len(records), len(actual), len(reference), len(challenger)}
+    if len(vector_lengths) != 1 or not records:
+        raise ValueError("Expected equal-length, non-empty bootstrap inputs")
+    if iterations <= 0:
+        raise ValueError("iterations must be positive")
+
+    by_video: dict[str, list[int]] = defaultdict(list)
+    for index, record in enumerate(records):
+        by_video[record["video_id"]].append(index)
+    groups = list(by_video.values())
+
+    def metrics(
+        index_groups: list[list[int]], predicted: list[float]
+    ) -> tuple[float, float, float, float]:
+        pairwise_credit = 0.0
+        comparable_pairs = 0
+        top_hits = 0
+        regrets: list[float] = []
+        absolute_errors: list[float] = []
+        for indices in index_groups:
+            absolute_errors.extend(abs(actual[index] - predicted[index]) for index in indices)
+            for left_position, left in enumerate(indices):
+                for right in indices[left_position + 1 :]:
+                    actual_difference = actual[left] - actual[right]
+                    if actual_difference == 0:
+                        continue
+                    predicted_difference = predicted[left] - predicted[right]
+                    comparable_pairs += 1
+                    if predicted_difference == 0:
+                        pairwise_credit += 0.5
+                    elif (actual_difference > 0) == (predicted_difference > 0):
+                        pairwise_credit += 1.0
+            selected = max(indices, key=lambda index: (predicted[index], -index))
+            best_actual = max(actual[index] for index in indices)
+            selected_actual = actual[selected]
+            top_hits += math.isclose(selected_actual, best_actual)
+            regrets.append(best_actual - selected_actual)
+        return (
+            sum(absolute_errors) / len(absolute_errors),
+            pairwise_credit / comparable_pairs if comparable_pairs else 0.0,
+            top_hits / len(index_groups),
+            sum(regrets) / len(regrets),
+        )
+
+    reference_observed = metrics(groups, reference)
+    challenger_observed = metrics(groups, challenger)
+    observed = [
+        challenger_value - reference_value
+        for reference_value, challenger_value in zip(
+            reference_observed, challenger_observed, strict=True
+        )
+    ]
+    sampled_deltas: list[list[float]] = [[] for _ in observed]
+    generator = random.Random(seed)
+    for _ in range(iterations):
+        sampled_groups = [generator.choice(groups) for _ in groups]
+        reference_sample = metrics(sampled_groups, reference)
+        challenger_sample = metrics(sampled_groups, challenger)
+        for index, (reference_value, challenger_value) in enumerate(
+            zip(reference_sample, challenger_sample, strict=True)
+        ):
+            sampled_deltas[index].append(challenger_value - reference_value)
+
+    names = ("quality_mae", "pairwise_accuracy", "top_1_hit_rate", "mean_top_1_regret")
+    lower_is_better = {"quality_mae", "mean_top_1_regret"}
+    comparisons: dict[str, Any] = {}
+    for name, estimate, values in zip(names, observed, sampled_deltas, strict=True):
+        values_array = np.asarray(values)
+        improved = values_array < 0 if name in lower_is_better else values_array > 0
+        comparisons[f"{name}_delta"] = {
+            "estimate": estimate,
+            "confidence_interval_95": np.quantile(values_array, [0.025, 0.975]).tolist(),
+            "bootstrap_probability_improved": float(improved.mean()),
+        }
+    return {
+        "method": "paired cluster bootstrap resampling video_id",
+        "iterations": iterations,
+        "seed": seed,
+        "challenger_minus_reference": comparisons,
+    }
+
+
+def _model_to_json(
+    model: dict[str, np.ndarray],
+    feature_fields: tuple[str, ...] = MODEL_FEATURE_FIELDS,
+    feature_schema: str = FEATURE_SCHEMA,
+) -> dict[str, Any]:
     """Serialize the final standardized ridge model without a pickle dependency."""
     coefficients = model["coefficients"]
     return {
-        "feature_schema": FEATURE_SCHEMA,
-        "feature_fields": list(MODEL_FEATURE_FIELDS),
+        "feature_schema": feature_schema,
+        "feature_fields": list(feature_fields),
         "target_fields": list(CORE_SCORE_FIELDS),
         "feature_means": model["feature_means"].tolist(),
         "feature_scales": model["feature_scales"].tolist(),
@@ -277,7 +384,7 @@ def _model_to_json(model: dict[str, np.ndarray]) -> dict[str, Any]:
         "standardized_coefficients": {
             target: {
                 feature: float(coefficients[feature_index + 1, target_index])
-                for feature_index, feature in enumerate(MODEL_FEATURE_FIELDS)
+                for feature_index, feature in enumerate(feature_fields)
             }
             for target_index, target in enumerate(CORE_SCORE_FIELDS)
         },
@@ -289,16 +396,21 @@ def cross_validate_ridge(
     n_splits: int = 4,
     seed: int = 42,
     alpha: float = 10.0,
+    feature_fields: tuple[str, ...] = MODEL_FEATURE_FIELDS,
+    feature_schema: str = FEATURE_SCHEMA,
+    experiment: str = "grouped_ridge_handcrafted_v1",
 ) -> dict[str, Any]:
     """Generate out-of-fold predictions and a final deployable ridge model."""
     if not records:
         raise ValueError("Training data is empty")
     schemas = {record.get("feature_schema") for record in records}
-    if schemas != {FEATURE_SCHEMA}:
-        raise ValueError(f"Expected only feature schema {FEATURE_SCHEMA}, found {schemas}")
+    if schemas != {feature_schema}:
+        raise ValueError(f"Expected only feature schema {feature_schema}, found {schemas}")
+    if not feature_fields:
+        raise ValueError("At least one feature field is required")
 
     features = np.asarray(
-        [[record["features"][field] for field in MODEL_FEATURE_FIELDS] for record in records],
+        [[record["features"][field] for field in feature_fields] for record in records],
         dtype=float,
     )
     targets = np.asarray(
@@ -344,7 +456,9 @@ def cross_validate_ridge(
         }
 
     final_model = _fit_ridge(features, targets, alpha=alpha)
-    final_model_json = _model_to_json(final_model)
+    final_model_json = _model_to_json(
+        final_model, feature_fields=feature_fields, feature_schema=feature_schema
+    )
     final_model_json["alpha"] = alpha
     predictions = []
     for index, record in enumerate(records):
@@ -372,7 +486,7 @@ def cross_validate_ridge(
         )
 
     return {
-        "experiment": "grouped_ridge_handcrafted_v1",
+        "experiment": experiment,
         "dataset": {
             "clips": len(records),
             "videos": len({record["video_id"] for record in records}),
@@ -384,9 +498,9 @@ def cross_validate_ridge(
             ),
         },
         "features": {
-            "schema": FEATURE_SCHEMA,
-            "count": len(MODEL_FEATURE_FIELDS),
-            "fields": list(MODEL_FEATURE_FIELDS),
+            "schema": feature_schema,
+            "count": len(feature_fields),
+            "fields": list(feature_fields),
             "sampler_proxy_included": False,
         },
         "targets": {

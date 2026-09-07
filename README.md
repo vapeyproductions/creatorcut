@@ -127,6 +127,22 @@ but does not beat the fold-mean predictor on absolute error. This provides an ho
 threshold for semantic models to beat. See
 [docs/first-learned-baseline.md](docs/first-learned-baseline.md) for the full experiment.
 
+Encode the same candidate transcripts with a pinned MiniLM model and run a controlled
+representation ablation:
+
+```bash
+python -m pip install -e '.[semantic]'
+creatorcut-encode-transcripts
+creatorcut-evaluate-semantic
+```
+
+The frozen 384-dimensional sentence embeddings improve pairwise accuracy to 58.8%. Combining
+them with the handcrafted features reaches 62.4%, selects a top-rated clip in 9 of 16 unseen
+videos, and reduces average top-selection regret from 1.69 to 0.42 rating points. A video-level
+paired bootstrap reports uncertainty rather than treating the 96 correlated clips as independent.
+See [docs/semantic-embedding-evaluation.md](docs/semantic-embedding-evaluation.md) for the ablation,
+per-target results, and limitations.
+
 Score and evaluate the transparent ranking baselines:
 
 ```bash
