@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CreatorCut Failure Analysis</title>
+    <link rel="stylesheet" href="/assets/failure.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <div>
+          <p class="eyebrow">CREATORCUT · PRIVATE MODEL DIAGNOSTICS</p>
+          <h1>Why did the ranker choose the wrong clip?</h1>
+          <p class="lede">
+            Compare the out-of-fold model selection with your highest-rated candidate. Tag the
+            reason for the error; do not rescore the clips.
+          </p>
+        </div>
+        <div class="progress" aria-live="polite">
+          <strong id="progress-count">Loading…</strong>
+          <span id="progress-detail"></span>
+        </div>
+      </header>
+
+      <section id="complete" class="complete hidden">
+        <p class="eyebrow">REVIEW COMPLETE</p>
+        <h2>All ranking mistakes are diagnosed.</h2>
+        <p>The structured reasons are saved locally and remain outside Git.</p>
+      </section>
+
+      <section id="workspace" class="hidden">
+        <div class="case-heading">
+          <div>
+            <span id="video-id" class="pill"></span>
+            <span id="regret" class="regret"></span>
+          </div>
+          <p>Focus on why the model-selected clip is weaker and whether a boundary edit fixes it.</p>
+        </div>
+
+        <div class="comparison">
+          <article class="clip-card model-card">
+            <div class="card-label">MODEL SELECTED</div>
+            <video id="model-video" controls preload="metadata"></video>
+            <button class="replay" type="button" data-video="model-video">Replay exact interval</button>
+            <div id="model-meta" class="clip-meta"></div>
+            <div id="model-scores" class="scores"></div>
+            <p id="model-transcript" class="transcript"></p>
+          </article>
+
+          <article class="clip-card best-card">
+            <div class="card-label">YOUR HIGHEST-RATED CLIP</div>
+            <video id="best-video" controls preload="metadata"></video>
+            <button class="replay" type="button" data-video="best-video">Replay exact interval</button>
+            <div id="best-meta" class="clip-meta"></div>
+            <div id="best-scores" class="scores"></div>
+            <p id="best-transcript" class="transcript"></p>
+          </article>
+        </div>
+
+        <form id="diagnosis-form">
+          <fieldset>
+            <legend>Why was the model selection weaker?</legend>
+            <p class="hint">Select every reason that materially affected the decision.</p>
+            <div id="reasons" class="reason-grid"></div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Could changing only the boundaries rescue it?</legend>
+            <div class="radio-row">
+              <label><input type="radio" name="boundary-fixable" value="true" required /> Yes</label>
+              <label><input type="radio" name="boundary-fixable" value="false" required /> No</label>
+            </div>
+            <p class="hint">Optional: negative means earlier; positive means later.</p>
+            <div class="adjustments">
+              <label>
+                Move start by seconds
+                <input id="start-adjustment" type="number" min="-30" max="30" step="0.1" />
+              </label>
+              <label>
+                Move end by seconds
+                <input id="end-adjustment" type="number" min="-30" max="30" step="0.1" />
+              </label>
+            </div>
+          </fieldset>
+
+          <label class="notes-label" for="notes">Optional observation</label>
+          <textarea id="notes" maxlength="1000" rows="3"></textarea>
+          <p id="error" class="error" role="alert"></p>
+          <button id="save" class="save" type="submit">Save diagnosis and continue</button>
+        </form>
+      </section>
+    </main>
+    <script src="/assets/failure.js"></script>
+  </body>
+</html>

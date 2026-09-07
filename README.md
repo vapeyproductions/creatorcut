@@ -160,4 +160,42 @@ creatorcut-train-pairwise
 The pairwise logistic model learns from 221 non-tied within-video preferences, but it does not
 beat pointwise hybrid ridge on unseen videos: pairwise accuracy falls from 62.4% to 57.5%, top-1
 hit rate falls from 56.2% to 31.2%, and mean selection regret rises from 0.42 to 0.89. CreatorCut
-therefor
+therefore retains the simpler pointwise model. See
+[docs/pairwise-ranking-evaluation.md](docs/pairwise-ranking-evaluation.md) for the objective,
+grouped evaluation, uncertainty analysis, and decision.
+
+Generate and review the current model's out-of-fold top-selection mistakes:
+
+```bash
+creatorcut-analyze-failures
+creatorcut-review-failures
+```
+
+The automatic pass isolates seven misses without exposing transcripts. Across those misses, the
+human-best clip improves hook by 1.29 points on average, completeness by 1.00, clarity by 0.86,
+and payoff by 0.71. Four model selections begin with a context-dependent first word, while all
+seven appear complete under the current punctuation-only ending rule. The local comparison UI
+collects structured boundary, ad/music, duration, delivery, hook, and payoff diagnoses in a
+separate ignored file without changing the original ratings.
+
+Score and evaluate the transparent ranking baselines:
+
+```bash
+creatorcut-score-baselines
+creatorcut-evaluate-baselines
+```
+
+The initial transcript heuristic does not recover a known strong clip in its top 10 and has
+negative rank correlation with the human scores. This is retained as an honest experimental
+baseline: surface-level punctuation, keyword, and speaking-rate features do not capture the
+semantic value and payoff represented in the annotations. See
+[docs/baseline-evaluation.md](docs/baseline-evaluation.md) for methodology and limitations.
+
+Run the automated checks:
+
+```bash
+pytest -q
+ruff check src tests
+```
+
+Raw videos, model weights, and generated transcripts are intentionally excluded from Git.
