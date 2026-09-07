@@ -11,6 +11,7 @@ requires-python = ">=3.11,<3.13"
 dependencies = [
   "av>=18,<19",
   "faster-whisper==1.2.1",
+  "numpy>=1.26,<3",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +31,8 @@ creatorcut-sample-annotations = "creatorcut.sampling:main"
 creatorcut-annotate = "creatorcut.annotation_app:main"
 creatorcut-score-baselines = "creatorcut.baseline:score_main"
 creatorcut-evaluate-baselines = "creatorcut.baseline:evaluate_main"
+creatorcut-build-training-data = "creatorcut.training:build_main"
+creatorcut-train-ridge = "creatorcut.training:train_main"
 creatorcut-inspect-media = "creatorcut.media:main"
 
 [tool.setuptools]

@@ -38,7 +38,8 @@ CreatorCut currently includes a 20-video source manifest, media and transcript v
 word-level timestamped transcription, a pipeline that joins human-scored intervals to
 transcript text, and a sentence-aligned candidate generator evaluated against the human
 selections. Transparent duration-only and transcript-heuristic rankers establish the first
-ranking baselines.
+ranking baselines. A completed blind-review dataset now supports a leakage-safe first learned
+ranker evaluated on entirely unseen videos.
 
 ## Local development
 
@@ -111,6 +112,20 @@ creatorcut-annotate --media-dir /path/to/downloaded/videos --batch-size 10
 The local interface streams only manifest-declared videos, pauses playback at the sampled clip
 boundary, hides all proxy-score metadata, and resumes after restarts. Reviews are saved atomically
 to `data/processed/annotation_reviews.jsonl`, which remains excluded from Git.
+
+Build model-ready rows from the completed reviews, then train the first supervised baseline:
+
+```bash
+creatorcut-build-training-data
+creatorcut-train-ridge
+```
+
+The training pipeline joins 96 blind reviews from 16 videos to versioned transcript features.
+It excludes the sampler's proxy score and evaluates ridge regression with four folds grouped by
+video. The initial learned model improves within-video pairwise accuracy from 50.0% to 55.7%,
+but does not beat the fold-mean predictor on absolute error. This provides an honest, reproducible
+threshold for semantic models to beat. See
+[docs/first-learned-baseline.md](docs/first-learned-baseline.md) for the full experiment.
 
 Score and evaluate the transparent ranking baselines:
 
