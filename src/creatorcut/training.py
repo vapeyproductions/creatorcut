@@ -6,6 +6,7 @@ import argparse
 import json
 import math
 import random
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ from creatorcut.candidates import CORE_SCORE_FIELDS, write_jsonl
 from creatorcut.dataset import load_jsonl
 
 FEATURE_SCHEMA = "handcrafted_transcript_v1"
+QUEUE_FEATURE_SCHEMA = "queue_transcript_v1"
 MODEL_FEATURE_FIELDS = (
     "duration_seconds",
     "word_count",
@@ -34,6 +36,8 @@ MODEL_FEATURE_FIELDS = (
     "filler_control",
     "intro_outro",
 )
+
+SENTENCE_BOUNDARY_PATTERN = re.compile(r"[.!?][\"'”’)]*(?:\s|$)")
 
 
 def _unique_index(
@@ -82,6 +86,40 @@ def candidate_model_features(candidate: dict[str, Any]) -> dict[str, float]:
     }
 
 
+def queue_model_features(queued: dict[str, Any]) -> dict[str, float]:
+    """Reconstruct text features when a reviewed queue is the canonical local artifact."""
+    text = queued.get("transcript_text")
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError(f"{queued.get('annotation_id')}: transcript_text must be non-empty")
+    tokens = tokenize(text)
+    sentence_count = max(1, len(SENTENCE_BOUNDARY_PATTERN.findall(text)))
+    candidate = {
+        "text": text,
+        "duration_seconds": float(queued["duration_seconds"]),
+        "word_count": len(tokens),
+        "sentence_count": sentence_count,
+    }
+    return candidate_model_features(candidate)
+
+
+def _validated_targets(annotation_id: str, review: dict[str, Any]) -> dict[str, float]:
+    targets: dict[str, float] = {}
+    for field in CORE_SCORE_FIELDS:
+        value = review.get(field)
+        if not isinstance(value, int) or not 1 <= value <= 5:
+            raise ValueError(f"{annotation_id}: {field} must be an integer from 1 to 5")
+        targets[field] = float(value)
+    targets["quality_score"] = sum(targets.values()) / len(CORE_SCORE_FIELDS)
+    return targets
+
+
+def _validated_exportability(annotation_id: str, review: dict[str, Any]) -> bool:
+    technically_exportable = review.get("technically_exportable")
+    if not isinstance(technically_exportable, bool):
+        raise ValueError(f"{annotation_id}: technically_exportable must be boolean")
+    return technically_exportable
+
+
 def build_reviewed_training_records(
     queue: list[dict[str, Any]],
     reviews: list[dict[str, Any]],
@@ -116,17 +154,8 @@ def build_reviewed_training_records(
         if queued["transcript_text"] != candidate["text"]:
             raise ValueError(f"{annotation_id}: queued and candidate transcript text differ")
 
-        targets: dict[str, float] = {}
-        for field in CORE_SCORE_FIELDS:
-            value = review.get(field)
-            if not isinstance(value, int) or not 1 <= value <= 5:
-                raise ValueError(f"{annotation_id}: {field} must be an integer from 1 to 5")
-            targets[field] = float(value)
-        targets["quality_score"] = sum(targets.values()) / len(CORE_SCORE_FIELDS)
-
-        technically_exportable = review.get("technically_exportable")
-        if not isinstance(technically_exportable, bool):
-            raise ValueError(f"{annotation_id}: technically_exportable must be boolean")
+        targets = _validated_targets(annotation_id, review)
+        technically_exportable = _validated_exportability(annotation_id, review)
 
         features = candidate_model_features(candidate)
         missing_features = set(MODEL_FEATURE_FIELDS) - features.keys()
@@ -144,6 +173,50 @@ def build_reviewed_training_records(
                 "transcript_word_count": len(tokenize(candidate["text"])),
                 "technically_exportable": technically_exportable,
                 "feature_schema": FEATURE_SCHEMA,
+                "features": {field: features[field] for field in MODEL_FEATURE_FIELDS},
+                "targets": targets,
+            }
+        )
+    return output
+
+
+def build_reviewed_training_records_from_queue(
+    queue: list[dict[str, Any]], reviews: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Build model rows from an immutable review queue without sampler-score leakage."""
+    queue_by_annotation = _unique_index(queue, "annotation_id", "annotation queue")
+    _unique_index(reviews, "annotation_id", "annotation reviews")
+
+    output: list[dict[str, Any]] = []
+    for review in reviews:
+        annotation_id = review["annotation_id"]
+        if annotation_id not in queue_by_annotation:
+            raise ValueError(f"{annotation_id}: review is not present in the annotation queue")
+        queued = queue_by_annotation[annotation_id]
+        for field in (
+            "candidate_id",
+            "video_id",
+            "start_seconds",
+            "end_seconds",
+            "duration_seconds",
+        ):
+            _matching_value(annotation_id, field, queued, review)
+
+        features = queue_model_features(queued)
+        targets = _validated_targets(annotation_id, review)
+        technically_exportable = _validated_exportability(annotation_id, review)
+        output.append(
+            {
+                "annotation_id": annotation_id,
+                "candidate_id": queued["candidate_id"],
+                "video_id": review["video_id"],
+                "start_seconds": float(review["start_seconds"]),
+                "end_seconds": float(review["end_seconds"]),
+                "duration_seconds": float(review["duration_seconds"]),
+                "transcript_text": queued["transcript_text"],
+                "transcript_word_count": len(tokenize(queued["transcript_text"])),
+                "technically_exportable": technically_exportable,
+                "feature_schema": QUEUE_FEATURE_SCHEMA,
                 "features": {field: features[field] for field in MODEL_FEATURE_FIELDS},
                 "targets": targets,
             }
@@ -538,11 +611,24 @@ def build_main() -> None:
     parser.add_argument(
         "--output", type=Path, default=Path("data/processed/training_clips.jsonl")
     )
+    parser.add_argument(
+        "--from-queue",
+        action="store_true",
+        help=(
+            "Reconstruct transcript features from the immutable queue instead of loading the "
+            "full candidate cache"
+        ),
+    )
     args = parser.parse_args()
 
-    records = build_reviewed_training_records(
-        load_jsonl(args.queue), load_jsonl(args.reviews), load_jsonl(args.candidates)
-    )
+    if args.from_queue:
+        records = build_reviewed_training_records_from_queue(
+            load_jsonl(args.queue), load_jsonl(args.reviews)
+        )
+    else:
+        records = build_reviewed_training_records(
+            load_jsonl(args.queue), load_jsonl(args.reviews), load_jsonl(args.candidates)
+        )
     write_jsonl(records, args.output)
     print(
         f"Wrote {len(records)} reviewed clips from "

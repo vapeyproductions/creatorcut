@@ -4,6 +4,7 @@ from creatorcut.training import (
     MODEL_FEATURE_FIELDS,
     build_group_folds,
     build_reviewed_training_records,
+    build_reviewed_training_records_from_queue,
     cross_validate_ridge,
     paired_video_bootstrap,
     ranking_metrics,
@@ -68,6 +69,17 @@ def test_build_reviewed_training_records_rejects_identity_mismatch() -> None:
 
     with pytest.raises(ValueError, match="disagree on video_id"):
         build_reviewed_training_records([queue_item()], [invalid_review], [candidate()])
+
+
+def test_build_reviewed_training_records_from_queue_excludes_sampling_proxy() -> None:
+    records = build_reviewed_training_records_from_queue([queue_item()], [review()])
+
+    assert len(records) == 1
+    assert records[0]["feature_schema"] == "queue_transcript_v1"
+    assert records[0]["targets"]["quality_score"] == pytest.approx(4.5)
+    assert tuple(records[0]["features"]) == MODEL_FEATURE_FIELDS
+    assert "sampling" not in records[0]
+    assert "proxy_score" not in records[0]
 
 
 def modeled_records(video_count: int = 8, clips_per_video: int = 3) -> list[dict]:

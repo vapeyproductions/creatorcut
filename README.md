@@ -16,7 +16,7 @@ Rather than treating clip selection as an opaque generative-AI task, CreatorCut 
 
 ## ML system
 
-- Human-annotated clip-quality and pairwise-preference data
+- Human clip-quality ratings converted into within-video preference pairs
 - Text, audio, visual, and structural feature pipelines
 - Heuristic and learning-to-rank baselines
 - Leakage-safe evaluation and modality ablations
@@ -120,6 +120,14 @@ creatorcut-build-training-data
 creatorcut-train-ridge
 ```
 
+An immutable annotation queue can also reconstruct the reviewed feature table without the full
+candidate cache. This derives features only from the queued transcript and timing fields and
+still excludes every sampler field:
+
+```bash
+creatorcut-build-training-data --from-queue
+```
+
 The training pipeline joins 96 blind reviews from 16 videos to versioned transcript features.
 It excludes the sampler's proxy score and evaluates ridge regression with four folds grouped by
 video. The initial learned model improves within-video pairwise accuracy from 50.0% to 55.7%,
@@ -143,24 +151,13 @@ paired bootstrap reports uncertainty rather than treating the 96 correlated clip
 See [docs/semantic-embedding-evaluation.md](docs/semantic-embedding-evaluation.md) for the ablation,
 per-target results, and limitations.
 
-Score and evaluate the transparent ranking baselines:
+Test whether a ranking-specific objective improves the same hybrid representation:
 
 ```bash
-creatorcut-score-baselines
-creatorcut-evaluate-baselines
+creatorcut-train-pairwise
 ```
 
-The initial transcript heuristic does not recover a known strong clip in its top 10 and has
-negative rank correlation with the human scores. This is retained as an honest experimental
-baseline: surface-level punctuation, keyword, and speaking-rate features do not capture the
-semantic value and payoff represented in the annotations. See
-[docs/baseline-evaluation.md](docs/baseline-evaluation.md) for methodology and limitations.
-
-Run the automated checks:
-
-```bash
-pytest -q
-ruff check src tests
-```
-
-Raw videos, model weights, and generated transcripts are intentionally excluded from Git.
+The pairwise logistic model learns from 221 non-tied within-video preferences, but it does not
+beat pointwise hybrid ridge on unseen videos: pairwise accuracy falls from 62.4% to 57.5%, top-1
+hit rate falls from 56.2% to 31.2%, and mean selection regret rises from 0.42 to 0.89. CreatorCut
+therefor
