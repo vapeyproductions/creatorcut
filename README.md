@@ -185,6 +185,19 @@ case favored the comparison clip. These are therefore counterfactual editing lab
 of 6/7 raw ranking accuracy. The result motivates a two-stage design: rank promising moments, then
 refine their start and end boundaries before the final editorial comparison.
 
+Run the fixed transcript-and-pause boundary baseline:
+
+```bash
+creatorcut-refine-boundaries --media-dir /path/to/downloaded/videos
+```
+
+On the five labeled starts, the refiner reaches 16.36-second MAE versus 14.56 seconds for leaving
+the original boundary unchanged; it also misses the sole labeled end. The negative result shows
+that nearby punctuation and silence cannot recover semantic edits such as adding setup or removing
+an intro. The implementation is retained without tuning on these six labels. See
+[docs/boundary-refinement-evaluation.md](docs/boundary-refinement-evaluation.md) for the leakage
+controls, results, limitations, and next model decision.
+
 Score and evaluate the transparent ranking baselines:
 
 ```bash

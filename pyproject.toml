@@ -43,6 +43,7 @@ creatorcut-evaluate-semantic = "creatorcut.semantic:evaluate_main"
 creatorcut-train-pairwise = "creatorcut.ranking:main"
 creatorcut-analyze-failures = "creatorcut.failure_analysis:main"
 creatorcut-review-failures = "creatorcut.failure_app:main"
+creatorcut-refine-boundaries = "creatorcut.boundary_refinement:main"
 creatorcut-inspect-media = "creatorcut.media:main"
 
 [tool.setuptools]
