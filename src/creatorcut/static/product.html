@@ -16,7 +16,10 @@
         <strong>CREATORCUT</strong>
         <span>LOCAL TEST BUILD</span>
       </div>
-      <p>One long video in. Three ranked clips out.</p>
+      <div class="masthead-actions">
+        <p>One long video in. Three ranked clips out.</p>
+        <button id="model-report-button" class="plain-button" type="button" disabled>MODEL REPORT</button>
+      </div>
     </header>
 
     <main>
@@ -127,6 +130,66 @@
           </p>
           <button id="finish-review" type="button">FINISH REVIEW</button>
           <p id="finish-review-message" class="clip-message" role="status"></p>
+        </section>
+      </section>
+
+      <section id="model-report-section" aria-labelledby="model-report-title" hidden>
+        <div class="results-heading">
+          <div>
+            <p class="section-number">04 / ML OPERATIONS</p>
+            <h2 id="model-report-title">Model &amp; feedback report</h2>
+          </div>
+          <button id="close-model-report" class="plain-button" type="button">BACK</button>
+        </div>
+        <p id="model-report-intro" class="personalization-status">Loading report…</p>
+        <p id="model-report-error" class="error report-error" role="alert" hidden></p>
+
+        <div class="report-grid" aria-label="Feedback metrics">
+          <article><strong id="report-video-count">0</strong><span>source videos</span></article>
+          <article><strong id="report-presented-count">0</strong><span>model clips presented</span></article>
+          <article><strong id="report-selected-count">0</strong><span>model clips selected</span></article>
+          <article><strong id="report-edit-count">0</strong><span>edited downloads</span></article>
+          <article><strong id="report-custom-count">0</strong><span>creator-added clips</span></article>
+          <article><strong id="report-analytics-count">0</strong><span>analytics imports</span></article>
+        </div>
+
+        <section class="report-block" aria-labelledby="adaptation-title">
+          <h3 id="adaptation-title">What is allowed to change ranking</h3>
+          <div id="adaptation-rows" class="adaptation-rows"></div>
+          <p class="small-print">
+            The global model stays frozen. Creator and audience adjustments are isolated,
+            evidence-gated, and capped. Production feedback cannot silently retrain or replace it.
+          </p>
+        </section>
+
+        <section class="report-block" aria-labelledby="operations-title">
+          <h3 id="operations-title">Serving reliability</h3>
+          <dl id="operations-list" class="report-definition-list"></dl>
+        </section>
+
+        <section class="report-block" aria-labelledby="lineage-title">
+          <h3 id="lineage-title">Model lineage</h3>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Model version</th><th>Videos</th><th>Recommendations</th><th>Last used</th></tr></thead>
+              <tbody id="lineage-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="report-block" aria-labelledby="adjustments-title">
+          <h3 id="adjustments-title">Observed adjustment magnitudes</h3>
+          <dl id="adjustment-list" class="report-definition-list"></dl>
+        </section>
+
+        <section class="report-block" aria-labelledby="events-title">
+          <h3 id="events-title">Recent feedback events</h3>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Event</th><th>Video</th><th>Clip</th><th>Interval</th><th>Recorded</th></tr></thead>
+              <tbody id="event-body"></tbody>
+            </table>
+          </div>
         </section>
       </section>
     </main>

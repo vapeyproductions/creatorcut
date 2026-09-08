@@ -52,6 +52,12 @@ footer {
   font-style: italic;
 }
 
+.masthead-actions {
+  display: flex;
+  gap: 18px;
+  align-items: baseline;
+}
+
 main {
   min-height: 70vh;
 }
@@ -220,6 +226,113 @@ button:disabled {
   color: #a40000;
   font-size: 13px;
   font-weight: bold;
+}
+
+.report-error {
+  margin: 0 0 22px;
+}
+
+.report-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 3px solid #111;
+  border-left: 1px solid #111;
+}
+
+.report-grid article {
+  min-height: 115px;
+  padding: 16px;
+  border-right: 1px solid #111;
+  border-bottom: 1px solid #111;
+}
+
+.report-grid strong,
+.report-grid span {
+  display: block;
+}
+
+.report-grid strong {
+  margin-bottom: 18px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 42px;
+  font-weight: normal;
+}
+
+.report-grid span,
+.report-block,
+.report-definition-list,
+table {
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+}
+
+.report-block {
+  margin-top: 38px;
+  padding-top: 14px;
+  border-top: 3px solid #111;
+}
+
+.report-block h3 {
+  margin: 0 0 18px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 25px;
+  font-weight: normal;
+}
+
+.adaptation-row {
+  display: grid;
+  grid-template-columns: 160px 120px minmax(0, 1fr);
+  gap: 14px;
+  padding: 11px 0;
+  border-top: 1px dotted #111;
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+}
+
+.adaptation-row strong {
+  text-transform: uppercase;
+}
+
+.report-definition-list {
+  margin: 0;
+}
+
+.report-definition-list div {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr);
+  gap: 20px;
+  padding: 9px 0;
+  border-top: 1px dotted #111;
+}
+
+.report-definition-list dt,
+.report-definition-list dd {
+  margin: 0;
+}
+
+.report-definition-list dt {
+  font-weight: bold;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 9px;
+  border: 1px solid #111;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  background: #d8d5cb;
 }
 
 progress {
@@ -609,6 +722,20 @@ footer p {
 
   .masthead p {
     display: none;
+  }
+
+  .masthead-actions {
+    width: 100%;
+  }
+
+  .report-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .adaptation-row,
+  .report-definition-list div {
+    grid-template-columns: 1fr;
+    gap: 5px;
   }
 
   #upload-form,

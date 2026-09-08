@@ -106,6 +106,12 @@ The ignored JSONL snapshot includes impressions, explicit choices, custom clips,
 model lineage, semantic representations, and the latest audience outcome without exposing media
 paths.
 
+The in-app **Model report** makes the same system visible without opening the database. It reports
+per-creator serving/job states, model versions, presentation and choice counts, selection rate,
+timestamp-correction magnitude, audience-data coverage, adaptive-layer gates, score-adjustment
+magnitudes, and a recent event audit trail. Empty or insufficient evidence is shown as such rather
+than converted into a success metric.
+
 Validate the source manifest and annotations:
 
 ```bash

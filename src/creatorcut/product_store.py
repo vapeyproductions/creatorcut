@@ -879,6 +879,187 @@ class ProductStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def creator_ml_report(self, creator_id: str) -> dict[str, Any]:
+        """Summarize serving, lineage, labels, edits, and adaptation for one creator."""
+        with self._connect() as connection:
+            creator = connection.execute(
+                "SELECT id, display_name, created_at FROM creator_profiles WHERE id = ?",
+                (creator_id,),
+            ).fetchone()
+            if creator is None:
+                raise KeyError(creator_id)
+            video_rows = connection.execute(
+                """
+                SELECT status, COUNT(*) AS count FROM videos
+                WHERE creator_id = ? GROUP BY status
+                """,
+                (creator_id,),
+            ).fetchall()
+            job_rows = connection.execute(
+                """
+                SELECT processing_jobs.status, COUNT(*) AS count
+                FROM processing_jobs
+                JOIN videos ON videos.id = processing_jobs.video_id
+                WHERE videos.creator_id = ?
+                GROUP BY processing_jobs.status
+                """,
+                (creator_id,),
+            ).fetchall()
+            event_rows = connection.execute(
+                """
+                SELECT event_type, COUNT(*) AS count,
+                       COUNT(DISTINCT clip_id) AS clip_count
+                FROM feedback_events
+                WHERE creator_id = ? GROUP BY event_type
+                """,
+                (creator_id,),
+            ).fetchall()
+            clip_totals = connection.execute(
+                """
+                SELECT COUNT(*) AS total,
+                       SUM(CASE WHEN origin = 'model' THEN 1 ELSE 0 END) AS model_total,
+                       SUM(CASE WHEN origin = 'creator' THEN 1 ELSE 0 END) AS custom_total
+                FROM clips
+                JOIN videos ON videos.id = clips.video_id
+                WHERE videos.creator_id = ?
+                """,
+                (creator_id,),
+            ).fetchone()
+            selected_model_clips = connection.execute(
+                """
+                SELECT COUNT(DISTINCT feedback_events.clip_id)
+                FROM feedback_events
+                JOIN clips ON clips.id = feedback_events.clip_id
+                WHERE feedback_events.creator_id = ? AND clips.origin = 'model'
+                  AND feedback_events.event_type IN ('download_original', 'download_edited')
+                """,
+                (creator_id,),
+            ).fetchone()[0]
+            edits = connection.execute(
+                """
+                SELECT feedback_events.start_seconds, feedback_events.end_seconds,
+                       clips.start_seconds AS proposed_start,
+                       clips.end_seconds AS proposed_end
+                FROM feedback_events
+                JOIN clips ON clips.id = feedback_events.clip_id
+                WHERE feedback_events.creator_id = ?
+                  AND feedback_events.event_type = 'download_edited'
+                """,
+                (creator_id,),
+            ).fetchall()
+            lineage_rows = connection.execute(
+                """
+                SELECT COALESCE(clips.ranking_model_version, 'unversioned') AS model_version,
+                       COUNT(*) AS clip_count,
+                       COUNT(DISTINCT clips.video_id) AS video_count,
+                       MIN(clips.created_at) AS first_seen,
+                       MAX(clips.created_at) AS last_seen
+                FROM clips
+                JOIN videos ON videos.id = clips.video_id
+                WHERE videos.creator_id = ? AND clips.origin = 'model'
+                GROUP BY COALESCE(clips.ranking_model_version, 'unversioned')
+                ORDER BY last_seen DESC
+                """,
+                (creator_id,),
+            ).fetchall()
+            adjustment_row = connection.execute(
+                """
+                SELECT AVG(ABS(editorial_adjustment)) AS editorial_mean_absolute,
+                       MAX(ABS(editorial_adjustment)) AS editorial_max_absolute,
+                       AVG(ABS(performance_adjustment)) AS performance_mean_absolute,
+                       MAX(ABS(performance_adjustment)) AS performance_max_absolute,
+                       AVG(ABS(semantic_performance_adjustment)) AS semantic_mean_absolute,
+                       MAX(ABS(semantic_performance_adjustment)) AS semantic_max_absolute,
+                       AVG(ABS(source_retention_adjustment)) AS retention_mean_absolute,
+                       MAX(ABS(source_retention_adjustment)) AS retention_max_absolute
+                FROM clips
+                JOIN videos ON videos.id = clips.video_id
+                WHERE videos.creator_id = ? AND clips.origin = 'model'
+                """,
+                (creator_id,),
+            ).fetchone()
+            analytics_count = connection.execute(
+                "SELECT COUNT(*) FROM analytics_imports WHERE creator_id = ?",
+                (creator_id,),
+            ).fetchone()[0]
+            performance_count = connection.execute(
+                "SELECT COUNT(*) FROM performance_reports WHERE creator_id = ?",
+                (creator_id,),
+            ).fetchone()[0]
+            recent_rows = connection.execute(
+                """
+                SELECT feedback_events.event_type, feedback_events.start_seconds,
+                       feedback_events.end_seconds, feedback_events.created_at,
+                       clips.rank, clips.origin, videos.original_filename
+                FROM feedback_events
+                JOIN clips ON clips.id = feedback_events.clip_id
+                JOIN videos ON videos.id = feedback_events.video_id
+                WHERE feedback_events.creator_id = ?
+                ORDER BY feedback_events.id DESC LIMIT 20
+                """,
+                (creator_id,),
+            ).fetchall()
+
+        video_counts = {row["status"]: row["count"] for row in video_rows}
+        job_counts = {row["status"]: row["count"] for row in job_rows}
+        event_counts = {
+            row["event_type"]: {
+                "events": row["count"],
+                "distinct_clips": row["clip_count"],
+            }
+            for row in event_rows
+        }
+        presented_count = event_counts.get("presented", {}).get("distinct_clips", 0)
+        absolute_boundary_changes = [
+            abs(float(row["start_seconds"]) - float(row["proposed_start"]))
+            + abs(float(row["end_seconds"]) - float(row["proposed_end"]))
+            for row in edits
+        ]
+        creator_summary = self.creator_summary(creator_id)
+        return {
+            "report_schema": "creatorcut_ml_operations_report_v1",
+            "generated_at": utc_now(),
+            "creator": dict(creator),
+            "serving": {
+                "video_count": sum(video_counts.values()),
+                "video_status_counts": video_counts,
+                "job_status_counts": job_counts,
+            },
+            "feedback": {
+                "clip_count": int(clip_totals["total"] or 0),
+                "model_clip_count": int(clip_totals["model_total"] or 0),
+                "custom_clip_count": int(clip_totals["custom_total"] or 0),
+                "presented_model_clip_count": presented_count,
+                "selected_model_clip_count": selected_model_clips,
+                "model_clip_selection_rate": round(
+                    selected_model_clips / presented_count, 4
+                )
+                if presented_count
+                else None,
+                "edited_download_count": len(edits),
+                "median_total_boundary_change_seconds": round(
+                    median(absolute_boundary_changes), 3
+                )
+                if absolute_boundary_changes
+                else None,
+                "event_counts": event_counts,
+                "analytics_import_count": analytics_count,
+                "performance_report_count": performance_count,
+            },
+            "adaptation": creator_summary,
+            "lineage": [dict(row) for row in lineage_rows],
+            "adjustments": {
+                key: round(float(value or 0.0), 4)
+                for key, value in dict(adjustment_row).items()
+            },
+            "recent_events": [dict(row) for row in recent_rows],
+            "global_model_policy": {
+                "frozen": True,
+                "production_feedback_auto_trains_global_model": False,
+                "promotion_requires_unseen_video_evaluation": True,
+            },
+        }
+
     def get_clip(self, clip_id: str) -> dict[str, Any]:
         """Return one ranked clip plus its owning creator and private source path."""
         with self._connect() as connection:

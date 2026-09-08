@@ -26,6 +26,22 @@ const elements = {
   processingMessage: document.querySelector("#processing-message"),
   processingProgress: document.querySelector("#processing-progress"),
   resultsSection: document.querySelector("#results-section"),
+  modelReportSection: document.querySelector("#model-report-section"),
+  modelReportButton: document.querySelector("#model-report-button"),
+  closeModelReport: document.querySelector("#close-model-report"),
+  modelReportIntro: document.querySelector("#model-report-intro"),
+  modelReportError: document.querySelector("#model-report-error"),
+  reportVideoCount: document.querySelector("#report-video-count"),
+  reportPresentedCount: document.querySelector("#report-presented-count"),
+  reportSelectedCount: document.querySelector("#report-selected-count"),
+  reportEditCount: document.querySelector("#report-edit-count"),
+  reportCustomCount: document.querySelector("#report-custom-count"),
+  reportAnalyticsCount: document.querySelector("#report-analytics-count"),
+  adaptationRows: document.querySelector("#adaptation-rows"),
+  operationsList: document.querySelector("#operations-list"),
+  lineageBody: document.querySelector("#lineage-body"),
+  adjustmentList: document.querySelector("#adjustment-list"),
+  eventBody: document.querySelector("#event-body"),
   clips: document.querySelector("#clips"),
   resultsTitle: document.querySelector("#results-title"),
   personalizationStatus: document.querySelector("#personalization-status"),
@@ -49,6 +65,7 @@ const elements = {
 
 const savedName = localStorage.getItem("creatorcut_creator_name");
 if (savedName) elements.creatorName.value = savedName;
+elements.modelReportButton.disabled = !state.creatorId;
 
 function showError(element, message) {
   element.textContent = message;
@@ -66,6 +83,7 @@ function setView(name) {
   elements.uploadSection.hidden = name !== "upload";
   elements.processingSection.hidden = name !== "processing";
   elements.resultsSection.hidden = name !== "results";
+  elements.modelReportSection.hidden = name !== "model-report";
 }
 
 elements.uploadForm.addEventListener("submit", async (event) => {
@@ -78,6 +96,7 @@ elements.uploadForm.addEventListener("submit", async (event) => {
     if (state.creatorId) form.append("creator_id", state.creatorId);
     const payload = await request("/api/uploads", { method: "POST", body: form });
     state.creatorId = payload.creator.id;
+    elements.modelReportButton.disabled = false;
     state.video = payload.video;
     localStorage.setItem("creatorcut_creator_id", payload.creator.id);
     localStorage.setItem("creatorcut_creator_name", payload.creator.display_name);
@@ -531,6 +550,206 @@ elements.newVideo.addEventListener("click", () => {
   elements.creatorName.value = localStorage.getItem("creatorcut_creator_name") || "My channel";
   setView("upload");
   loadRecentVideos();
+});
+
+function appendDefinition(list, term, description) {
+  const row = document.createElement("div");
+  const name = document.createElement("dt");
+  const value = document.createElement("dd");
+  name.textContent = term;
+  value.textContent = description;
+  row.append(name, value);
+  list.append(row);
+}
+
+function renderAdaptationRow(name, statusText, evidence, cap) {
+  const row = document.createElement("div");
+  row.className = "adaptation-row";
+  const title = document.createElement("strong");
+  const status = document.createElement("span");
+  const detail = document.createElement("span");
+  title.textContent = name;
+  status.textContent = statusText;
+  detail.textContent = `${evidence} ${cap}`;
+  row.append(title, status, detail);
+  elements.adaptationRows.append(row);
+}
+
+function formatCounts(counts) {
+  const entries = Object.entries(counts || {});
+  if (entries.length === 0) return "none recorded";
+  return entries
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, count]) => `${name.replaceAll("_", " ")}: ${count}`)
+    .join(" · ");
+}
+
+function formatRecordedAt(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? value : date.toLocaleString();
+}
+
+function renderModelReport(report) {
+  const feedback = report.feedback;
+  const adaptation = report.adaptation;
+  const selectionRate = feedback.model_clip_selection_rate;
+  elements.modelReportIntro.textContent =
+    `${report.creator.display_name} · report generated ${formatRecordedAt(report.generated_at)} · ` +
+    `${selectionRate === null ? "selection rate not available" : `${Math.round(selectionRate * 100)}% model-clip selection rate`}`;
+  elements.reportVideoCount.textContent = report.serving.video_count;
+  elements.reportPresentedCount.textContent = feedback.presented_model_clip_count;
+  elements.reportSelectedCount.textContent = feedback.selected_model_clip_count;
+  elements.reportEditCount.textContent = feedback.edited_download_count;
+  elements.reportCustomCount.textContent = feedback.custom_clip_count;
+  elements.reportAnalyticsCount.textContent = feedback.analytics_import_count;
+
+  elements.adaptationRows.replaceChildren();
+  renderAdaptationRow(
+    "Global ranker",
+    "FROZEN",
+    "Frozen; promotion requires evaluation on unseen source videos.",
+    "No online updates.",
+  );
+  renderAdaptationRow(
+    "Editorial",
+    adaptation.personalization_active ? "ACTIVE" : "WAITING",
+    `${adaptation.decision_count} explicit decisions; activates at 3.`,
+    "Maximum adjustment ±0.35.",
+  );
+  renderAdaptationRow(
+    "Audience",
+    adaptation.performance_personalization_active ? "ACTIVE" : "WAITING",
+    `${adaptation.performance_eligible_clip_count}/${adaptation.performance_minimum_clip_count} comparable Shorts.`,
+    "Combined maximum ±0.25.",
+  );
+  renderAdaptationRow(
+    "Semantics",
+    adaptation.semantic_performance_active ? "ACTIVE" : "WAITING",
+    `${adaptation.semantic_performance_example_count}/${adaptation.performance_minimum_clip_count} outcome-linked embeddings.`,
+    "Maximum component ±0.15.",
+  );
+
+  elements.operationsList.replaceChildren();
+  appendDefinition(
+    elements.operationsList,
+    "Video states",
+    formatCounts(report.serving.video_status_counts),
+  );
+  appendDefinition(
+    elements.operationsList,
+    "Persistent job states",
+    formatCounts(report.serving.job_status_counts),
+  );
+  appendDefinition(
+    elements.operationsList,
+    "Retry policy",
+    "Expiring worker leases, heartbeat renewal, exponential retry delay, 3 attempts maximum.",
+  );
+  appendDefinition(
+    elements.operationsList,
+    "Stored outcome records",
+    `${feedback.performance_report_count} reports across ${feedback.analytics_import_count} analytics imports.`,
+  );
+  appendDefinition(
+    elements.operationsList,
+    "Median boundary correction",
+    feedback.median_total_boundary_change_seconds === null
+      ? "No edited downloads yet."
+      : `${feedback.median_total_boundary_change_seconds.toFixed(1)} total seconds per edited selection.`,
+  );
+
+  elements.lineageBody.replaceChildren();
+  if (report.lineage.length === 0) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 4;
+    cell.textContent = "No ranked recommendations have been stored for this creator yet.";
+    row.append(cell);
+    elements.lineageBody.append(row);
+  } else {
+    for (const lineage of report.lineage) {
+      const row = document.createElement("tr");
+      for (const value of [
+        lineage.model_version,
+        lineage.video_count,
+        lineage.clip_count,
+        formatRecordedAt(lineage.last_seen),
+      ]) {
+        const cell = document.createElement("td");
+        cell.textContent = value;
+        row.append(cell);
+      }
+      elements.lineageBody.append(row);
+    }
+  }
+
+  const adjustmentLabels = [
+    ["Editorial preference", "editorial"],
+    ["Structured performance", "performance"],
+    ["Semantic performance", "semantic"],
+    ["Source retention", "retention"],
+  ];
+  elements.adjustmentList.replaceChildren();
+  for (const [label, key] of adjustmentLabels) {
+    appendDefinition(
+      elements.adjustmentList,
+      label,
+      `mean absolute ${report.adjustments[`${key}_mean_absolute`].toFixed(3)} · ` +
+        `maximum absolute ${report.adjustments[`${key}_max_absolute`].toFixed(3)}`,
+    );
+  }
+
+  elements.eventBody.replaceChildren();
+  if (report.recent_events.length === 0) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 5;
+    cell.textContent = "No feedback events have been recorded yet.";
+    row.append(cell);
+    elements.eventBody.append(row);
+  } else {
+    for (const event of report.recent_events) {
+      const row = document.createElement("tr");
+      const interval =
+        event.start_seconds === null || event.end_seconds === null
+          ? "—"
+          : `${formatTime(event.start_seconds)}–${formatTime(event.end_seconds)}`;
+      for (const value of [
+        event.event_type.replaceAll("_", " "),
+        event.original_filename,
+        `${event.origin} #${event.rank}`,
+        interval,
+        formatRecordedAt(event.created_at),
+      ]) {
+        const cell = document.createElement("td");
+        cell.textContent = value;
+        row.append(cell);
+      }
+      elements.eventBody.append(row);
+    }
+  }
+}
+
+async function loadModelReport() {
+  if (!state.creatorId) return;
+  showError(elements.modelReportError, "");
+  elements.modelReportIntro.textContent = "Loading model lineage and feedback evidence…";
+  setView("model-report");
+  try {
+    const report = await request(
+      `/api/creators/${encodeURIComponent(state.creatorId)}/model-report`,
+    );
+    renderModelReport(report);
+  } catch (error) {
+    showError(elements.modelReportError, error.message || "The model report could not be loaded.");
+  }
+}
+
+elements.modelReportButton.addEventListener("click", loadModelReport);
+elements.closeModelReport.addEventListener("click", () => {
+  if (state.video?.status === "ready") renderResults(state.video);
+  else setView("upload");
 });
 
 elements.sourceAnalyticsForm.addEventListener("submit", async (event) => {

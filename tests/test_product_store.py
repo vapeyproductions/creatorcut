@@ -80,6 +80,30 @@ def test_store_persists_upload_clips_and_presentations(tmp_path):
     assert json.loads(store.get_clip(clips[0]["id"])["semantic_embedding_json"])
 
 
+def test_ml_report_exposes_lineage_labels_edits_and_job_state(tmp_path):
+    store, creator, _, clips = populated_store(tmp_path)
+    store.record_editorial_event(
+        clips[0]["id"], "download_edited", 11.0, 39.0
+    )
+    store.record_editorial_event(
+        clips[1]["id"], "reject", clips[1]["start_seconds"], clips[1]["end_seconds"]
+    )
+
+    report = store.creator_ml_report(creator["id"])
+
+    assert report["report_schema"] == "creatorcut_ml_operations_report_v1"
+    assert report["serving"]["video_status_counts"] == {"ready": 1}
+    assert report["serving"]["job_status_counts"] == {"succeeded": 1}
+    assert report["feedback"]["presented_model_clip_count"] == 3
+    assert report["feedback"]["selected_model_clip_count"] == 1
+    assert report["feedback"]["model_clip_selection_rate"] == pytest.approx(1 / 3, abs=0.0001)
+    assert report["feedback"]["median_total_boundary_change_seconds"] == 2.0
+    assert report["feedback"]["event_counts"]["reject"]["distinct_clips"] == 1
+    assert report["lineage"][0]["model_version"] == "unversioned"
+    assert report["global_model_policy"]["frozen"] is True
+    assert report["global_model_policy"]["production_feedback_auto_trains_global_model"] is False
+
+
 def test_store_can_backfill_a_legacy_clip_embedding(tmp_path):
     store, _, _, clips = populated_store(tmp_path)
 

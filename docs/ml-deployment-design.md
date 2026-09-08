@@ -37,6 +37,18 @@ runtime image, liveness and readiness endpoints, structured JSON logs, and CI ch
 and container construction. Readiness verifies the serving database and frozen model artifact;
 queue counters expose queued, running, succeeded, and failed work without revealing creator data.
 
+## In-product ML operations report
+
+The website exposes a per-creator report backed by live operational records rather than demo
+numbers. It combines video and persistent-job states, model-version lineage, presented and selected
+clip counts, custom alternatives, explicit rejects, edited-boundary magnitude, analytics coverage,
+adaptive-layer gates, observed adjustment magnitudes, and the latest feedback events. This gives a
+reviewer a trace from model impression to human decision to audience outcome while keeping media
+paths and transcript embeddings private.
+
+The report deliberately labels the global ranker as frozen and shows inactive adaptation layers as
+waiting for evidence. A missing denominator stays unavailable; it is not rendered as zero success.
+
 ## Durable data contracts
 
 SQLite stores creator profiles, source-video jobs, clips, feedback events, audience-performance

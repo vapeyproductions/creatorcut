@@ -194,6 +194,15 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                 ).strip("/")
                 self._send_json({"videos": application.store.list_videos(creator_id)})
                 return
+            if path.startswith("/api/creators/") and path.endswith("/model-report"):
+                creator_id = unquote(
+                    path[len("/api/creators/") : -len("/model-report")]
+                ).strip("/")
+                try:
+                    self._send_json(application.store.creator_ml_report(creator_id))
+                except KeyError:
+                    self._send_json({"error": "Creator not found"}, HTTPStatus.NOT_FOUND)
+                return
             if path.startswith("/api/exports/"):
                 filename = Path(unquote(path[len("/api/exports/") :])).name
                 export_path = application.processor.work_dir / "exports" / filename
