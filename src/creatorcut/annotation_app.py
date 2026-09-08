@@ -26,6 +26,35 @@ PUBLIC_TASK_FIELDS = (
     "transcript_text",
 )
 STATIC_DIRECTORY = Path(__file__).with_name("static")
+MAXIMUM_BOUNDARY_ADJUSTMENT_SECONDS = 30.0
+
+
+def _validate_boundary_edit(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("boundary_edit must be an object or null")
+    boundaries: dict[str, float] = {}
+    for field in ("start_seconds", "end_seconds"):
+        boundary = value.get(field)
+        if isinstance(boundary, bool) or not isinstance(boundary, int | float):
+            raise ValueError(f"boundary_edit.{field} must be numeric")
+        boundaries[field] = float(boundary)
+    if boundaries["start_seconds"] < 0:
+        raise ValueError("Edited clip start must not be negative")
+    if boundaries["end_seconds"] <= boundaries["start_seconds"]:
+        raise ValueError("Edited clip boundaries must define a positive interval")
+
+    scores = value.get("scores")
+    if not isinstance(scores, dict):
+        raise ValueError("boundary_edit.scores must be an object")
+    normalized_scores: dict[str, int] = {}
+    for field in SCORE_FIELDS:
+        score = scores.get(field)
+        if isinstance(score, bool) or not isinstance(score, int) or not 1 <= score <= 5:
+            raise ValueError(f"boundary_edit.scores.{field} must be an integer from 1 to 5")
+        normalized_scores[field] = score
+    return {**boundaries, "scores": normalized_scores}
 
 
 def validate_labels(value: Any) -> dict[str, Any]:
@@ -52,6 +81,7 @@ def validate_labels(value: Any) -> dict[str, Any]:
     if len(notes) > 1000:
         raise ValueError("notes must be 1000 characters or fewer")
     labels["notes"] = notes
+    labels["boundary_edit"] = _validate_boundary_edit(value.get("boundary_edit"))
     return labels
 
 
@@ -171,7 +201,28 @@ class AnnotationApplication:
         task = self.tasks.get(annotation_id)
         if task is None:
             raise KeyError(annotation_id)
-        return self.store.save(task, validate_labels(value))
+        labels = validate_labels(value)
+        boundary_edit = labels["boundary_edit"]
+        if boundary_edit is not None:
+            original_start = float(task["start_seconds"])
+            original_end = float(task["end_seconds"])
+            edited_start = boundary_edit["start_seconds"]
+            edited_end = boundary_edit["end_seconds"]
+            start_adjustment = edited_start - original_start
+            end_adjustment = edited_end - original_end
+            if abs(start_adjustment) > MAXIMUM_BOUNDARY_ADJUSTMENT_SECONDS:
+                raise ValueError("Edited start must stay within 30 seconds of the original")
+            if abs(end_adjustment) > MAXIMUM_BOUNDARY_ADJUSTMENT_SECONDS:
+                raise ValueError("Edited end must stay within 30 seconds of the original")
+            if abs(start_adjustment) < 0.05 and abs(end_adjustment) < 0.05:
+                raise ValueError("Change at least one boundary before saving an edited version")
+            labels["boundary_edit"] = {
+                **boundary_edit,
+                "duration_seconds": round(edited_end - edited_start, 3),
+                "start_adjustment_seconds": round(start_adjustment, 3),
+                "end_adjustment_seconds": round(end_adjustment, 3),
+            }
+        return self.store.save(task, labels)
 
     def video_path(self, video_id: str) -> Path:
         """Resolve only manifest-declared media within the configured directory."""

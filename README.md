@@ -181,6 +181,11 @@ and encoder schemas, and serialized v1 parameters before writing private predict
 SHA-256 commitment can then prove those predictions existed before the labels. See
 [docs/external-holdout-protocol.md](docs/external-holdout-protocol.md).
 
+The Annotation Studio always records required scores for the original sealed interval. When a
+candidate is nearly usable, its optional boundary editor can also capture adjusted timestamps and
+a separate score set for the edited version. These secondary labels support future boundary-model
+research without changing frozen v1's holdout target or metrics.
+
 Test whether a ranking-specific objective improves the same hybrid representation:
 
 ```bash

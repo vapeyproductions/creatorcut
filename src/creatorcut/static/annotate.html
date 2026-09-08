@@ -82,7 +82,7 @@
 
             <div class="playback-bar">
               <button id="replay-button" class="icon-button" type="button">
-                <span aria-hidden="true">↺</span> Replay clip
+                <span aria-hidden="true">↺</span> Replay original
               </button>
               <span id="clip-range" class="time-range">00:00 → 00:40</span>
               <span class="keyboard-hint"><kbd>R</kbd> replay · <kbd>Space</kbd> play/pause</span>
@@ -95,17 +95,122 @@
               </div>
               <p id="transcript-text"></p>
             </article>
+
+            <section class="boundary-panel" aria-labelledby="boundary-heading">
+              <label class="edit-toggle" for="enable-boundary-edit">
+                <input id="enable-boundary-edit" type="checkbox" />
+                <span>
+                  <strong id="boundary-heading">Improve this clip’s boundaries</strong>
+                  <small>
+                    Optional secondary label. Original scores remain the frozen-model target.
+                  </small>
+                </span>
+              </label>
+
+              <div id="boundary-editor" hidden>
+                <p class="editor-hint">
+                  Drag either edge, or use the buttons for exact 0.1-second changes. Releasing an
+                  edge seeks the video there.
+                </p>
+                <div class="timeline" aria-label="Adjust the clip start and end">
+                  <div class="timeline-rail"></div>
+                  <div id="timeline-selection" class="timeline-selection"></div>
+                  <input
+                    id="start-handle"
+                    class="timeline-range start-range"
+                    type="range"
+                    step="0.1"
+                    aria-label="Adjusted clip start"
+                  />
+                  <input
+                    id="end-handle"
+                    class="timeline-range end-range"
+                    type="range"
+                    step="0.1"
+                    aria-label="Adjusted clip end"
+                  />
+                </div>
+                <div class="timeline-labels" aria-hidden="true">
+                  <span id="window-start"></span>
+                  <span id="window-end"></span>
+                </div>
+
+                <div class="boundary-readouts">
+                  <section class="boundary-readout">
+                    <span class="boundary-name">START</span>
+                    <strong id="adjusted-start-time"></strong>
+                    <span id="start-delta" class="boundary-delta"></span>
+                    <div class="nudge-row">
+                      <button type="button" data-nudge="start" data-delta="-0.1">−0.1s</button>
+                      <button type="button" data-nudge="start" data-delta="0.1">+0.1s</button>
+                    </div>
+                  </section>
+                  <section class="boundary-readout">
+                    <span class="boundary-name">END</span>
+                    <strong id="adjusted-end-time"></strong>
+                    <span id="end-delta" class="boundary-delta"></span>
+                    <div class="nudge-row">
+                      <button type="button" data-nudge="end" data-delta="-0.1">−0.1s</button>
+                      <button type="button" data-nudge="end" data-delta="0.1">+0.1s</button>
+                    </div>
+                  </section>
+                  <section class="boundary-readout duration-readout">
+                    <span class="boundary-name">EDITED DURATION</span>
+                    <strong id="adjusted-duration"></strong>
+                    <span id="preview-position" class="boundary-delta">Ready to preview</span>
+                  </section>
+                </div>
+
+                <div class="editor-actions">
+                  <button id="preview-adjusted" class="button button-primary" type="button">
+                    Preview edited clip
+                  </button>
+                  <button id="reset-boundaries" class="button button-secondary" type="button">
+                    Reset boundaries
+                  </button>
+                </div>
+
+                <section class="edited-score-section" aria-labelledby="edited-score-heading">
+                  <div class="edited-score-heading">
+                    <span class="eyebrow">Optional second judgment</span>
+                    <h3 id="edited-score-heading">Score the edited version</h3>
+                    <p>Rate what you hear after the boundary change. These do not replace the original scores.</p>
+                  </div>
+                  <div class="edited-score-grid">
+                    <div class="score-field" data-score-set="edited" data-field="hook">
+                      <div class="field-copy"><label>Edited hook</label></div>
+                      <div class="score-group" role="radiogroup" aria-label="Edited hook score"></div>
+                    </div>
+                    <div class="score-field" data-score-set="edited" data-field="completeness">
+                      <div class="field-copy"><label>Edited completeness</label></div>
+                      <div class="score-group" role="radiogroup" aria-label="Edited completeness score"></div>
+                    </div>
+                    <div class="score-field" data-score-set="edited" data-field="payoff">
+                      <div class="field-copy"><label>Edited payoff</label></div>
+                      <div class="score-group" role="radiogroup" aria-label="Edited payoff score"></div>
+                    </div>
+                    <div class="score-field" data-score-set="edited" data-field="clarity">
+                      <div class="field-copy"><label>Edited clarity</label></div>
+                      <div class="score-group" role="radiogroup" aria-label="Edited clarity score"></div>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </section>
           </section>
 
           <aside class="score-panel" aria-labelledby="score-heading">
             <div class="panel-heading">
               <span class="eyebrow">Your judgment</span>
-              <h2 id="score-heading">Score what you actually see</h2>
-              <p>The model’s opinion is hidden. Use the full 1–5 range.</p>
+              <h2 id="score-heading">Score the original clip</h2>
+              <p>
+                These required scores evaluate the exact interval proposed before review. The
+                model’s opinion is hidden.
+              </p>
             </div>
 
             <form id="review-form" novalidate>
-              <div class="score-field" data-field="hook">
+              <div class="score-field" data-score-set="original" data-field="hook">
                 <div class="field-copy">
                   <label>Hook</label>
                   <span>Does the opening make you want to keep watching?</span>
@@ -113,7 +218,7 @@
                 <div class="score-group" role="radiogroup" aria-label="Hook score"></div>
               </div>
 
-              <div class="score-field" data-field="completeness">
+              <div class="score-field" data-score-set="original" data-field="completeness">
                 <div class="field-copy">
                   <label>Completeness</label>
                   <span>Can the clip stand alone without missing context?</span>
@@ -121,7 +226,7 @@
                 <div class="score-group" role="radiogroup" aria-label="Completeness score"></div>
               </div>
 
-              <div class="score-field" data-field="payoff">
+              <div class="score-field" data-score-set="original" data-field="payoff">
                 <div class="field-copy">
                   <label>Payoff</label>
                   <span>Does it deliver insight, emotion, or resolution?</span>
@@ -129,7 +234,7 @@
                 <div class="score-group" role="radiogroup" aria-label="Payoff score"></div>
               </div>
 
-              <div class="score-field" data-field="clarity">
+              <div class="score-field" data-score-set="original" data-field="clarity">
                 <div class="field-copy">
                   <label>Clarity</label>
                   <span>Is the message easy to understand and follow?</span>

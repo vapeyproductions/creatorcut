@@ -31,6 +31,7 @@ def labels():
         "clarity": 5,
         "technically_exportable": True,
         "notes": "Clear and useful",
+        "boundary_edit": None,
     }
 
 
@@ -88,3 +89,78 @@ def test_application_hides_sampling_metadata_and_resumes(tmp_path):
     resumed = application.next_tasks()
     assert [item["annotation_id"] for item in resumed] == ["video_005_sample_02"]
     assert application.stats() == {"total": 2, "completed": 1, "remaining": 1}
+
+
+def test_application_preserves_original_scores_and_normalizes_boundary_edit(tmp_path):
+    manifest = [{"video_id": "video_005", "local_filename": "video_005.mp4"}]
+    store = ReviewStore(tmp_path / "reviews.jsonl")
+    application = AnnotationApplication([task()], manifest, store, tmp_path)
+    value = labels()
+    value["boundary_edit"] = {
+        "start_seconds": 10.0,
+        "end_seconds": 37.5,
+        "scores": {"hook": 4, "completeness": 5, "payoff": 5, "clarity": 5},
+    }
+
+    saved = application.save_review(task()["annotation_id"], value)
+
+    assert saved["hook"] == 4
+    assert saved["end_seconds"] == 40.0
+    assert saved["boundary_edit"] == {
+        "start_seconds": 10.0,
+        "end_seconds": 37.5,
+        "duration_seconds": 27.5,
+        "start_adjustment_seconds": 0.0,
+        "end_adjustment_seconds": -2.5,
+        "scores": {"hook": 4, "completeness": 5, "payoff": 5, "clarity": 5},
+    }
+
+
+def test_application_rejects_enabled_edit_without_a_boundary_change(tmp_path):
+    manifest = [{"video_id": "video_005", "local_filename": "video_005.mp4"}]
+    application = AnnotationApplication(
+        [task()], manifest, ReviewStore(tmp_path / "reviews.jsonl"), tmp_path
+    )
+    value = labels()
+    value["boundary_edit"] = {
+        "start_seconds": 10.0,
+        "end_seconds": 40.0,
+        "scores": {field: 4 for field in ("hook", "completeness", "payoff", "clarity")},
+    }
+
+    with pytest.raises(ValueError, match="Change at least one boundary"):
+        application.save_review(task()["annotation_id"], value)
+
+
+def test_validate_labels_requires_all_edited_scores():
+    value = labels()
+    value["boundary_edit"] = {
+        "start_seconds": 10.0,
+        "end_seconds": 37.5,
+        "scores": {"hook": 4, "completeness": 5, "payoff": 5},
+    }
+
+    with pytest.raises(ValueError, match="boundary_edit.scores.clarity"):
+        validate_labels(value)
+
+
+@pytest.mark.parametrize(
+    ("start_seconds", "end_seconds", "message"),
+    [(41.0, 60.0, "Edited start"), (10.0, 71.0, "Edited end")],
+)
+def test_application_rejects_boundary_adjustments_over_thirty_seconds(
+    tmp_path, start_seconds, end_seconds, message
+):
+    manifest = [{"video_id": "video_005", "local_filename": "video_005.mp4"}]
+    application = AnnotationApplication(
+        [task()], manifest, ReviewStore(tmp_path / "reviews.jsonl"), tmp_path
+    )
+    value = labels()
+    value["boundary_edit"] = {
+        "start_seconds": start_seconds,
+        "end_seconds": end_seconds,
+        "scores": {field: 4 for field in ("hook", "completeness", "payoff", "clarity")},
+    }
+
+    with pytest.raises(ValueError, match=message):
+        application.save_review(task()["annotation_id"], value)

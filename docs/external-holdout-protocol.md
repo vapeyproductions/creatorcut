@@ -31,11 +31,25 @@ than silently backfilled after evaluation.
    predictions plus a public SHA-256 commitment.
 7. Commit and push `data/holdout_v1/prediction_commitment.json` before human review begins.
 8. Review every sampled clip in the Annotation Studio, which does not expose model scores or
-   ranks.
+   ranks. Score the sealed interval as originally proposed; an optional boundary edit and second
+   score set may be recorded separately.
 9. Run `creatorcut-evaluate-holdout` only after all sealed prediction identities have matching
    reviews.
 10. Publish pairwise accuracy, top-1 hit rate, mean top-1 regret, quality MAE, and per-video error
     analysis before any retraining.
+
+## Original and boundary-adjusted labels
+
+The top-level `hook`, `completeness`, `payoff`, and `clarity` fields always describe the exact
+candidate interval that was sealed before review. `creatorcut-evaluate-holdout` reads only these
+original-interval labels when reporting frozen v1 performance.
+
+If a candidate would improve with different boundaries, the annotation tool may additionally save
+`boundary_edit.start_seconds`, `boundary_edit.end_seconds`, and a nested four-score judgment of the
+edited version. Edits are limited to 30 seconds in either direction, never overwrite the original
+timestamps or scores, and are excluded from v1 model selection and holdout metrics. They form a
+separate dataset for later boundary-optimization experiments after the registered evaluation is
+reported.
 
 ## Leakage controls
 
