@@ -272,6 +272,9 @@ class ProductStore:
     def _add_missing_columns(connection: sqlite3.Connection) -> None:
         """Apply additive migrations to databases created by earlier local builds."""
         migrations = {
+            "videos": {
+                "publishability_summary_json": "TEXT NOT NULL DEFAULT '{}'",
+            },
             "clips": {
                 "global_rank": "INTEGER",
                 "ranking_model_version": "TEXT",
@@ -281,6 +284,8 @@ class ProductStore:
                 "semantic_performance_adjustment": "REAL NOT NULL DEFAULT 0",
                 "source_retention_adjustment": "REAL NOT NULL DEFAULT 0",
                 "semantic_embedding_json": "TEXT",
+                "publishability_json": "TEXT NOT NULL DEFAULT '{}'",
+                "publishability_adjustment": "REAL NOT NULL DEFAULT 0",
             },
             "performance_reports": {
                 "engaged_views": "INTEGER",
@@ -383,6 +388,21 @@ class ProductStore:
                     """,
                     (utc_now(), utc_now(), video_id),
                 )
+
+    def save_video_publishability_summary(
+        self, video_id: str, summary: dict[str, Any]
+    ) -> None:
+        """Persist full candidate-gate counts, including removed candidates."""
+        with self._write_lock, self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE videos SET publishability_summary_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (json.dumps(summary, sort_keys=True), utc_now(), video_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(video_id)
 
     def claim_next_processing_job(
         self,
@@ -634,8 +654,9 @@ class ProductStore:
                         ranking_model_version, origin,
                         editorial_adjustment, performance_adjustment,
                         semantic_performance_adjustment, source_retention_adjustment,
+                        publishability_json, publishability_adjustment,
                         semantic_embedding_json, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         clip["id"],
@@ -656,6 +677,8 @@ class ProductStore:
                         clip.get("performance_adjustment", 0.0),
                         clip.get("semantic_performance_adjustment", 0.0),
                         clip.get("source_retention_adjustment", 0.0),
+                        json.dumps(clip.get("publishability", {}), sort_keys=True),
+                        clip.get("publishability_adjustment", 0.0),
                         json.dumps(clip.get("semantic_embedding"))
                         if clip.get("semantic_embedding") is not None
                         else None,
@@ -696,6 +719,10 @@ class ProductStore:
                                 "source_retention_adjustment": clip.get(
                                     "source_retention_adjustment", 0.0
                                 ),
+                                "publishability": clip.get("publishability", {}),
+                                "publishability_adjustment": clip.get(
+                                    "publishability_adjustment", 0.0
+                                ),
                             },
                             sort_keys=True,
                         ),
@@ -720,8 +747,9 @@ class ProductStore:
                     predicted_targets_json, explanation, global_rank,
                     ranking_model_version, origin, editorial_adjustment,
                     performance_adjustment, semantic_performance_adjustment,
-                    source_retention_adjustment, semantic_embedding_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    source_retention_adjustment, publishability_json,
+                    publishability_adjustment, semantic_embedding_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     clip_id,
@@ -742,6 +770,8 @@ class ProductStore:
                     clip.get("performance_adjustment", 0.0),
                     clip.get("semantic_performance_adjustment", 0.0),
                     clip.get("source_retention_adjustment", 0.0),
+                    json.dumps(clip.get("publishability", {}), sort_keys=True),
+                    clip.get("publishability_adjustment", 0.0),
                     json.dumps(clip["semantic_embedding"]),
                     utc_now(),
                 ),
@@ -767,6 +797,10 @@ class ProductStore:
                             ),
                             "global_score": clip["global_score"],
                             "personalized_score": clip["personalized_score"],
+                            "publishability": clip.get("publishability", {}),
+                            "publishability_adjustment": clip.get(
+                                "publishability_adjustment", 0.0
+                            ),
                         },
                         sort_keys=True,
                     ),
@@ -849,6 +883,9 @@ class ProductStore:
                 "SELECT * FROM clips WHERE video_id = ? ORDER BY rank", (video_id,)
             ).fetchall()
         video.pop("media_path")
+        video["publishability_summary"] = json.loads(
+            video.pop("publishability_summary_json", "{}")
+        )
         video["clips"] = [self._public_clip(dict(clip)) for clip in clips]
         video["job"] = self.processing_job_for_video(video_id)
         video["source_analytics"] = self.source_analytics_summary(video_id)
@@ -892,6 +929,13 @@ class ProductStore:
                 """
                 SELECT status, COUNT(*) AS count FROM videos
                 WHERE creator_id = ? GROUP BY status
+                """,
+                (creator_id,),
+            ).fetchall()
+            publishability_rows = connection.execute(
+                """
+                SELECT publishability_summary_json FROM videos
+                WHERE creator_id = ? AND publishability_summary_json != '{}'
                 """,
                 (creator_id,),
             ).fetchall()
@@ -971,7 +1015,9 @@ class ProductStore:
                        AVG(ABS(semantic_performance_adjustment)) AS semantic_mean_absolute,
                        MAX(ABS(semantic_performance_adjustment)) AS semantic_max_absolute,
                        AVG(ABS(source_retention_adjustment)) AS retention_mean_absolute,
-                       MAX(ABS(source_retention_adjustment)) AS retention_max_absolute
+                       MAX(ABS(source_retention_adjustment)) AS retention_max_absolute,
+                       AVG(ABS(publishability_adjustment)) AS publishability_mean_absolute,
+                       MAX(ABS(publishability_adjustment)) AS publishability_max_absolute
                 FROM clips
                 JOIN videos ON videos.id = clips.video_id
                 WHERE videos.creator_id = ? AND clips.origin = 'model'
@@ -1016,6 +1062,10 @@ class ProductStore:
             for row in edits
         ]
         creator_summary = self.creator_summary(creator_id)
+        publishability_summaries = [
+            json.loads(row["publishability_summary_json"])
+            for row in publishability_rows
+        ]
         return {
             "report_schema": "creatorcut_ml_operations_report_v1",
             "generated_at": utc_now(),
@@ -1051,6 +1101,24 @@ class ProductStore:
             "adjustments": {
                 key: round(float(value or 0.0), 4)
                 for key, value in dict(adjustment_row).items()
+            },
+            "publishability": {
+                "assessed_video_count": len(publishability_summaries),
+                "candidate_count": sum(
+                    int(summary.get("candidate_count", 0))
+                    for summary in publishability_summaries
+                ),
+                "blocked_candidate_count": sum(
+                    int(summary.get("blocked_count", 0))
+                    for summary in publishability_summaries
+                ),
+                "rule_versions": sorted(
+                    {
+                        summary["rule_version"]
+                        for summary in publishability_summaries
+                        if summary.get("rule_version")
+                    }
+                ),
             },
             "recent_events": [dict(row) for row in recent_rows],
             "global_model_policy": {
@@ -1937,7 +2005,9 @@ class ProductStore:
                             "source_retention": clip[
                                 "source_retention_adjustment"
                             ],
+                            "publishability": clip["publishability_adjustment"],
                         },
+                        "publishability": json.loads(clip["publishability_json"]),
                         "editorial_label": latest_label["event_type"]
                         if latest_label
                         else None,
@@ -1953,5 +2023,6 @@ class ProductStore:
     @staticmethod
     def _public_clip(clip: dict[str, Any]) -> dict[str, Any]:
         clip["predicted_targets"] = json.loads(clip.pop("predicted_targets_json"))
+        clip["publishability"] = json.loads(clip.pop("publishability_json", "{}"))
         clip.pop("semantic_embedding_json", None)
         return clip

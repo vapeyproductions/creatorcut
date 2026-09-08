@@ -240,6 +240,18 @@ function renderResults(video) {
     article.querySelector(".retention-adjustment").textContent = formatAdjustment(
       clip.source_retention_adjustment,
     );
+    const publishability = clip.publishability || {};
+    const publishabilityReasons = (publishability.reasons || []).map(
+      (reason) => reason.code.replaceAll("_", " "),
+    );
+    article.querySelector(".publishability-check").textContent = publishability.rule_version
+      ? `${publishability.eligible === false ? "BLOCK" : "PASS"} · ` +
+        `${Math.round(Number(publishability.score) * 100)}/100` +
+        `${publishabilityReasons.length ? ` · ${publishabilityReasons.join(", ")}` : " · no flagged risks"}`
+      : "Not recorded for this legacy recommendation";
+    article.querySelector(".publishability-adjustment").textContent = formatAdjustment(
+      clip.publishability_adjustment,
+    );
     const targets = article.querySelector(".target-scores");
     for (const field of ["hook", "completeness", "payoff", "clarity"]) {
       const item = document.createElement("span");
@@ -612,6 +624,14 @@ function renderModelReport(report) {
     "No online updates.",
   );
   renderAdaptationRow(
+    "Publishability",
+    "ACTIVE",
+    `${report.publishability.candidate_count} candidates assessed across ` +
+      `${report.publishability.assessed_video_count} videos; ` +
+      `${report.publishability.blocked_candidate_count} blocked.`,
+    "Deterministic penalty capped at −0.35.",
+  );
+  renderAdaptationRow(
     "Editorial",
     adaptation.personalization_active ? "ACTIVE" : "WAITING",
     `${adaptation.decision_count} explicit decisions; activates at 3.`,
@@ -685,6 +705,7 @@ function renderModelReport(report) {
   }
 
   const adjustmentLabels = [
+    ["Publishability gate", "publishability"],
     ["Editorial preference", "editorial"],
     ["Structured performance", "performance"],
     ["Semantic performance", "semantic"],

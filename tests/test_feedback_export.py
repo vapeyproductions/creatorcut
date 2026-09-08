@@ -67,4 +67,6 @@ def test_feedback_snapshot_preserves_lineage_labels_and_boundary_edits(tmp_path)
     assert record["start_delta_seconds"] == 1.5
     assert record["end_delta_seconds"] == -2.0
     assert record["latest_performance"]["engaged_views"] == 700
+    assert record["publishability"] == {}
+    assert record["adjustments"]["publishability"] == 0.0
     assert "media_path" not in record

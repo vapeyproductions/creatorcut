@@ -20,6 +20,11 @@ from creatorcut.candidates import (
 from creatorcut.holdout import score_frozen_model
 from creatorcut.media import inspect_media
 from creatorcut.product_store import ProductStore
+from creatorcut.publishability import (
+    attach_publishability,
+    publishability_summary,
+    summarize_publishability_batch,
+)
 from creatorcut.semantic import (
     DEFAULT_MAX_LENGTH,
     _download_model_files,
@@ -51,6 +56,7 @@ def candidate_prefilter_score(candidate: dict[str, Any]) -> float:
         + features["structure_fit"]
         + features["lexical_fit"]
         + features["filler_control"]
+        + float(candidate.get("publishability", {}).get("score", 1.0))
         - features["intro_outro"]
     )
 
@@ -491,6 +497,21 @@ class ProductProcessor:
             candidates = generate_candidates(video_id, words_to_sentence_units(words))
             if len(candidates) < 3:
                 raise ValueError("The video did not contain enough spoken content for three clips")
+            assessed_candidates = [attach_publishability(candidate) for candidate in candidates]
+            self.store.save_video_publishability_summary(
+                video_id, summarize_publishability_batch(assessed_candidates)
+            )
+            candidates = [
+                candidate
+                for candidate in assessed_candidates
+                if candidate["publishability"]["eligible"]
+            ]
+            if len(candidates) < 3:
+                blocked_count = len(assessed_candidates) - len(candidates)
+                raise ValueError(
+                    "The publishability gate left fewer than three safe spoken clips "
+                    f"({blocked_count} candidates were blocked)"
+                )
             candidates = prefilter_candidates(candidates)
 
             queue: list[dict[str, Any]] = []
@@ -569,6 +590,14 @@ class ProductProcessor:
             personalized, _ = self.store.apply_source_retention_signal(
                 video_id, personalized
             )
+            personalized = [
+                {
+                    **candidate,
+                    "personalized_score": float(candidate["personalized_score"])
+                    + float(candidate["publishability_adjustment"]),
+                }
+                for candidate in personalized
+            ]
             selected = select_diverse_top_clips(personalized)
             ranked = []
             for rank, clip in enumerate(selected, start=1):
@@ -580,7 +609,11 @@ class ProductProcessor:
                         "ranking_model_version": frozen_model.get(
                             "freeze_schema", "unversioned_frozen_model"
                         ),
-                        "explanation": explain_prediction(clip["predicted_targets"]),
+                        "explanation": (
+                            explain_prediction(clip["predicted_targets"])
+                            + " "
+                            + publishability_summary(clip["publishability"])
+                        ),
                     }
                 )
             self.store.save_ranked_clips(video_id, ranked)
@@ -652,12 +685,15 @@ class ProductProcessor:
             "global_score": prediction["predicted_quality_score"],
             "predicted_targets": prediction["predicted_targets"],
         }
+        candidate = attach_publishability(candidate)
         personalized, _ = self.store.personalize_candidates(
             video["creator_id"], [candidate]
         )
         adjusted, _ = self.store.apply_source_retention_signal(video_id, personalized)
         clip = {
             **adjusted[0],
+            "personalized_score": float(adjusted[0]["personalized_score"])
+            + float(adjusted[0]["publishability_adjustment"]),
             "ranking_model_version": frozen_model.get(
                 "freeze_schema", "unversioned_frozen_model"
             ),

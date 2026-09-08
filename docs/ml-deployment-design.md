@@ -12,6 +12,7 @@ upload
   -> media validation
   -> word-timestamped transcription
   -> sentence-aligned candidate generation
+  -> versioned publishability gate
   -> frozen transcript embedding + handcrafted features
   -> frozen global quality predictions
   -> editorial + performance + semantic + source-retention adjustments
@@ -48,6 +49,15 @@ paths and transcript embeddings private.
 
 The report deliberately labels the global ranker as frozen and shows inactive adaptation layers as
 waiting for evidence. A missing denominator stays unavailable; it is not rendered as zero success.
+
+## Publishability before quality
+
+Candidate eligibility is separate from learned quality. A narrow deterministic ruleset blocks
+high-confidence sponsor/promo reads and music-only intervals before embedding. Review-level context,
+boundary, intro/outro, duration, speech-density, and filler signals contribute a visible penalty
+capped at 0.35. The ruleset version, reasons, raw signals, and applied adjustment are persisted with
+each clip and exported for future supervised evaluation. The score is not described as a learned
+probability because the current ratings do not contain a balanced publishability target.
 
 ## Durable data contracts
 

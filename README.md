@@ -81,7 +81,8 @@ emit one-line structured JSON events suitable for a hosted log drain. GitHub Act
 tests, and a clean container build on every push and pull request.
 
 The product surface accepts an uploaded video, runs durable local transcription and frozen-model ranking,
-returns three non-duplicative recommendations, exposes global and adaptive score evidence, and
+removes high-confidence ads/music-only intervals through a versioned publishability gate, returns
+three non-duplicative recommendations, exposes global and adaptive score evidence, and
 creates frame-accurate MP4 downloads. A creator may adjust either boundary by up to 15 seconds,
 choose source-ratio or 9:16 captioned export, reject a recommendation, or define a completely custom
 interval. Finishing a review explicitly records untouched model options as weak unselected evidence;
@@ -92,7 +93,9 @@ saved without influencing ranking. After enough comparable Shorts, the product l
 interpretable quality preferences and similarity to semantically related high-performing clips,
 then displays an evidence-derived summary and recurring stronger/weaker terms. See
 [docs/personalization-and-feedback.md](docs/personalization-and-feedback.md) and
-[docs/youtube-analytics-feedback.md](docs/youtube-analytics-feedback.md). Runtime data contracts,
+[docs/youtube-analytics-feedback.md](docs/youtube-analytics-feedback.md). The safety/quality split and
+its current evidence limits are documented in
+[docs/publishability-gate.md](docs/publishability-gate.md). Runtime data contracts,
 event semantics, model lineage, and the local-to-hosted boundary are documented in
 [docs/ml-deployment-design.md](docs/ml-deployment-design.md).
 

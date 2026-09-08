@@ -1,0 +1,21 @@
+{
+  "schema": "creatorcut_publishability_gate_shadow_evaluation_v1",
+  "rule_version": "creatorcut_publishability_rules_v1",
+  "evaluation_scope": "reviewed development clips; not an unseen production estimate",
+  "records": 192,
+  "videos": 32,
+  "hard_blocked": 1,
+  "hard_block_rate": 0.005208333333333333,
+  "mean_blocked_human_quality": 1.0,
+  "videos_with_every_human_best_clip_blocked": 0,
+  "review_reason_counts": {
+    "advertisement_language": 1,
+    "context_dependent_start": 74,
+    "dense_speech": 6,
+    "incomplete_ending": 19,
+    "long_interval": 28,
+    "sparse_speech": 1
+  },
+  "mean_rules_score": 0.8928677083333323,
+  "interpretation": "This is a shadow check for obvious rule regressions. It does not estimate recall for unobserved ad, music, or context failures."
+}

@@ -81,7 +81,16 @@ def test_store_persists_upload_clips_and_presentations(tmp_path):
 
 
 def test_ml_report_exposes_lineage_labels_edits_and_job_state(tmp_path):
-    store, creator, _, clips = populated_store(tmp_path)
+    store, creator, video, clips = populated_store(tmp_path)
+    store.save_video_publishability_summary(
+        video["id"],
+        {
+            "rule_version": "creatorcut_publishability_rules_v1",
+            "candidate_count": 40,
+            "eligible_count": 38,
+            "blocked_count": 2,
+        },
+    )
     store.record_editorial_event(
         clips[0]["id"], "download_edited", 11.0, 39.0
     )
@@ -100,6 +109,12 @@ def test_ml_report_exposes_lineage_labels_edits_and_job_state(tmp_path):
     assert report["feedback"]["median_total_boundary_change_seconds"] == 2.0
     assert report["feedback"]["event_counts"]["reject"]["distinct_clips"] == 1
     assert report["lineage"][0]["model_version"] == "unversioned"
+    assert report["publishability"] == {
+        "assessed_video_count": 1,
+        "candidate_count": 40,
+        "blocked_candidate_count": 2,
+        "rule_versions": ["creatorcut_publishability_rules_v1"],
+    }
     assert report["global_model_policy"]["frozen"] is True
     assert report["global_model_policy"]["production_feedback_auto_trains_global_model"] is False
 
