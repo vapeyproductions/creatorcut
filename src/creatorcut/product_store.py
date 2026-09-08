@@ -1938,6 +1938,124 @@ class ProductStore:
                 ),
             )
 
+    def reset_backtest_source(
+        self, experiment_id: str, creator_id: str, source_key: str
+    ) -> dict[str, Any]:
+        """Detach one demo source and return its exact private paths for cleanup."""
+        now = utc_now()
+        with self._write_lock, self._connect() as connection:
+            source = connection.execute(
+                """
+                SELECT backtest_sources.*, backtest_experiments.creator_id,
+                       backtest_experiments.prediction_snapshot_json
+                FROM backtest_sources
+                JOIN backtest_experiments
+                  ON backtest_experiments.id = backtest_sources.experiment_id
+                WHERE backtest_sources.experiment_id = ?
+                  AND backtest_sources.source_key = ?
+                """,
+                (experiment_id, source_key),
+            ).fetchone()
+            if source is None or source["creator_id"] != creator_id:
+                raise KeyError(source_key)
+            if source["video_id"] is None:
+                raise ValueError("That source does not have an uploaded video")
+            if source["role"] == "reference":
+                holdout = connection.execute(
+                    """
+                    SELECT video_id FROM backtest_sources
+                    WHERE experiment_id = ? AND role = 'holdout'
+                    """,
+                    (experiment_id,),
+                ).fetchone()
+                if (
+                    holdout is not None
+                    and holdout["video_id"] is not None
+                ) or source["prediction_snapshot_json"]:
+                    raise ValueError(
+                        "Remove the held-out test upload before resetting a reference video"
+                    )
+            job = connection.execute(
+                "SELECT status FROM processing_jobs WHERE video_id = ?",
+                (source["video_id"],),
+            ).fetchone()
+            if job is not None and job["status"] == "running":
+                raise ValueError(
+                    "This upload is actively processing. Wait for it to finish before deleting it"
+                )
+            video = connection.execute(
+                "SELECT media_path FROM videos WHERE id = ?", (source["video_id"],)
+            ).fetchone()
+            short_paths = [
+                row["media_path"]
+                for row in connection.execute(
+                    """
+                    SELECT media_path FROM backtest_actual_clips
+                    WHERE experiment_id = ? AND source_key = ? AND media_path IS NOT NULL
+                    """,
+                    (experiment_id, source_key),
+                ).fetchall()
+            ]
+            connection.execute(
+                """
+                DELETE FROM performance_reports
+                WHERE clip_id IN (SELECT id FROM clips WHERE video_id = ?)
+                """,
+                (source["video_id"],),
+            )
+            connection.execute(
+                "DELETE FROM feedback_events WHERE video_id = ?",
+                (source["video_id"],),
+            )
+            connection.execute("DELETE FROM videos WHERE id = ?", (source["video_id"],))
+            connection.execute(
+                """
+                UPDATE backtest_actual_clips
+                SET uploaded_filename = NULL, media_path = NULL, status = 'awaiting_upload',
+                    source_start_seconds = NULL, source_end_seconds = NULL,
+                    alignment_score = NULL, alignment_method = NULL,
+                    compound_edit_detected = 0, segments_json = '[]', model_clip_id = NULL,
+                    updated_at = ?
+                WHERE experiment_id = ? AND source_key = ?
+                """,
+                (now, experiment_id, source_key),
+            )
+            connection.execute(
+                """
+                UPDATE backtest_sources
+                SET video_id = NULL, status = 'awaiting_upload', error_message = NULL,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (now, source["id"]),
+            )
+            if source["role"] == "holdout":
+                connection.execute(
+                    """
+                    UPDATE backtest_experiments
+                    SET status = 'references_ready', prediction_snapshot_json = NULL,
+                        serving_release_json = NULL, evaluation_json = NULL,
+                        predictions_frozen_at = NULL, evaluated_at = NULL, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (now, experiment_id),
+                )
+            else:
+                connection.execute(
+                    """
+                    UPDATE backtest_experiments
+                    SET status = 'awaiting_references', updated_at = ? WHERE id = ?
+                    """,
+                    (now, experiment_id),
+                )
+        return {
+            "video_id": source["video_id"],
+            "source_key": source_key,
+            "role": source["role"],
+            "media_paths": ([video["media_path"]] if video is not None else [])
+            + short_paths,
+        }
+
     def save_backtest_short_upload(
         self,
         experiment_id: str,

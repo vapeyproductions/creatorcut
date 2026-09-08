@@ -1,4 +1,5 @@
 const state = { csrfToken: null, experiment: null, pollTimer: null };
+const selectedFiles = new WeakMap();
 
 const elements = {
   signin: document.querySelector("#signin-required"),
@@ -45,6 +46,55 @@ function setBusy(form, busy, copy = "WORKING…") {
   if (!button.dataset.original) button.dataset.original = button.textContent;
   button.disabled = busy;
   button.textContent = busy ? copy : button.dataset.original;
+}
+
+function attachRemovableFileList(input) {
+  const list = document.createElement("ul");
+  list.className = "selected-file-list";
+  const label = input.closest("label");
+  (label || input).insertAdjacentElement("afterend", list);
+  const render = () => {
+    list.replaceChildren();
+    const files = selectedFiles.get(input) || [];
+    files.forEach((file, index) => {
+      const item = document.createElement("li");
+      const name = document.createElement("span");
+      name.textContent = file.name;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "plain-button";
+      remove.textContent = "REMOVE";
+      remove.setAttribute("aria-label", `Remove ${file.name}`);
+      remove.addEventListener("click", () => {
+        const remaining = (selectedFiles.get(input) || []).filter(
+          (_value, fileIndex) => fileIndex !== index,
+        );
+        selectedFiles.set(input, remaining);
+        if (!remaining.length) input.value = "";
+        render();
+      });
+      item.append(name, remove);
+      list.append(item);
+    });
+    list.hidden = files.length === 0;
+  };
+  input.addEventListener("change", () => {
+    selectedFiles.set(input, Array.from(input.files || []));
+    render();
+  });
+  render();
+}
+
+function formDataWithSelectedFiles(form) {
+  const payload = new FormData(form);
+  form.querySelectorAll("input[type='file']").forEach((input) => {
+    if (!selectedFiles.has(input)) return;
+    payload.delete(input.name);
+    for (const file of selectedFiles.get(input)) {
+      payload.append(input.name, file, file.name);
+    }
+  });
+  return payload;
 }
 
 function expectedRows(source) {
@@ -150,6 +200,7 @@ function renderPredictions(card) {
     input.required = true;
     input.accept = "video/mp4,video/quicktime,video/webm,.m4v";
     label.append(input);
+    attachRemovableFileList(input);
     const button = document.createElement("button");
     button.type = "submit";
     button.textContent = "REVEAL SHORTS AND SCORE TEST";
@@ -164,7 +215,7 @@ function renderPredictions(card) {
       try {
         const payload = await request(
           `/api/admin/backtests/${encodeURIComponent(state.experiment.id)}/holdout-clips`,
-          { method: "POST", body: new FormData(form) },
+          { method: "POST", body: formDataWithSelectedFiles(form) },
         );
         renderExperiment(payload.experiment);
       } catch (error) {
@@ -190,6 +241,7 @@ function renderSource(source) {
   card.querySelector(".source-status").textContent = statusText(source.status);
   card.querySelector(".source-copy").textContent = sourceDescription(source);
   const form = card.querySelector(".source-form");
+  form.querySelectorAll("input[type='file']").forEach(attachRemovableFileList);
   form.elements.role.value = source.role;
   form.elements.source_key.value = source.source_key;
   const shortLabel = card.querySelector(".short-input");
@@ -211,7 +263,7 @@ function renderSource(source) {
       try {
         const payload = await request(
           `/api/admin/backtests/${encodeURIComponent(state.experiment.id)}/sources`,
-          { method: "POST", body: new FormData(form) },
+          { method: "POST", body: formDataWithSelectedFiles(form) },
         );
         renderExperiment(payload.experiment);
         schedulePoll();
@@ -224,6 +276,34 @@ function renderSource(source) {
     });
   }
   const rows = expectedRows(source);
+  const sourceActions = card.querySelector(".source-actions");
+  const sourceMessage = card.querySelector(".source-message");
+  if (source.video_id) {
+    const removeUpload = document.createElement("button");
+    removeUpload.type = "button";
+    removeUpload.className = "plain-button delete-upload-button";
+    removeUpload.textContent = "DELETE THIS UPLOAD";
+    removeUpload.addEventListener("click", async () => {
+      const confirmed = window.confirm(
+        `Delete the uploaded ${source.source_key} video and its attached Short files? You can upload replacements afterward.`,
+      );
+      if (!confirmed) return;
+      removeUpload.disabled = true;
+      sourceMessage.hidden = true;
+      try {
+        const payload = await request(
+          `/api/admin/backtests/${encodeURIComponent(state.experiment.id)}/sources/${encodeURIComponent(source.source_key)}`,
+          { method: "DELETE" },
+        );
+        renderExperiment(payload.experiment);
+      } catch (error) {
+        sourceMessage.textContent = error.message;
+        sourceMessage.hidden = false;
+        removeUpload.disabled = false;
+      }
+    });
+    sourceActions.append(removeUpload);
+  }
   const expected = card.querySelector(".expected-files");
   if (source.role === "reference") {
     expected.textContent = `Expected Short filenames: ${rows.map((row) => `${row.content_id}.mp4`).join(", ")}`;
@@ -317,7 +397,7 @@ elements.setupForm.addEventListener("submit", async (event) => {
   try {
     const payload = await request("/api/admin/backtests", {
       method: "POST",
-      body: new FormData(elements.setupForm),
+      body: formDataWithSelectedFiles(elements.setupForm),
     });
     renderExperiment(payload.experiment);
   } catch (error) {
@@ -381,4 +461,5 @@ async function initialize() {
   }
 }
 
+elements.setupForm.querySelectorAll("input[type='file']").forEach(attachRemovableFileList);
 initialize();

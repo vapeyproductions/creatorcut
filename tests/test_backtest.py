@@ -8,6 +8,7 @@ from creatorcut.backtest import (
     evaluate_backtest,
     parse_backtest_tracker,
 )
+from creatorcut.product_app import ProductApplication
 from creatorcut.product_store import ProductStore
 
 
@@ -191,6 +192,98 @@ def test_staged_backtest_video_is_invisible_to_worker_until_enqueue(tmp_path):
     store.enqueue_video(video["id"])
     claimed = store.claim_next_processing_job("worker", 120)
     assert claimed["video_id"] == video["id"]
+
+
+def test_demo_source_reset_removes_private_files_and_allows_reupload(tmp_path):
+    store = ProductStore(tmp_path / "creatorcut.sqlite")
+    creator = store.ensure_creator("Administrator")
+    experiment = store.create_backtest_experiment(
+        creator["id"], "Recommendation test", "tracker.csv", parsed_tracker()
+    )
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    long_video = upload_dir / "source.mp4"
+    long_video.write_bytes(b"video")
+    video = store.create_video(creator["id"], long_video.name, long_video)
+    store.attach_backtest_source(
+        experiment["id"],
+        creator["id"],
+        "training_vid_1",
+        "reference",
+        video["id"],
+    )
+    short_paths = []
+    for row in [
+        item
+        for item in experiment["reference_clips"]
+        if item["source_key"] == "training_vid_1"
+    ]:
+        path = upload_dir / f"{row['content_id']}.mp4"
+        path.write_bytes(b"short")
+        short_paths.append(path)
+        store.save_backtest_short_upload(
+            experiment["id"],
+            creator["id"],
+            "training_vid_1",
+            path.name,
+            path,
+        )
+    work_dir = tmp_path / "work"
+    job_dir = work_dir / video["id"]
+    job_dir.mkdir(parents=True)
+    (job_dir / "transcript.json").write_text("{}", encoding="utf-8")
+
+    class ProcessorStub:
+        pass
+
+    processor = ProcessorStub()
+    processor.work_dir = work_dir
+    application = ProductApplication(store, processor, upload_dir)
+    reset = application.delete_backtest_source(
+        {"creator_id": creator["id"]}, experiment["id"], "training_vid_1"
+    )
+
+    source = next(
+        item for item in reset["sources"] if item["source_key"] == "training_vid_1"
+    )
+    rows = [
+        item
+        for item in reset["reference_clips"]
+        if item["source_key"] == "training_vid_1"
+    ]
+    assert source["video_id"] is None
+    assert source["status"] == "awaiting_upload"
+    assert all(row["uploaded_filename"] is None for row in rows)
+    assert not long_video.exists()
+    assert not any(path.exists() for path in short_paths)
+    assert not job_dir.exists()
+    assert store.processing_queue_summary()["queued"] == 0
+    with pytest.raises(KeyError):
+        store.get_video(video["id"])
+
+
+def test_demo_source_reset_waits_for_an_active_worker(tmp_path):
+    store = ProductStore(tmp_path / "creatorcut.sqlite")
+    creator = store.ensure_creator("Administrator")
+    experiment = store.create_backtest_experiment(
+        creator["id"], "Recommendation test", "tracker.csv", parsed_tracker()
+    )
+    source = tmp_path / "training_vid_1.mp4"
+    source.write_bytes(b"video")
+    video = store.create_video(creator["id"], source.name, source)
+    store.attach_backtest_source(
+        experiment["id"],
+        creator["id"],
+        "training_vid_1",
+        "reference",
+        video["id"],
+    )
+    store.claim_next_processing_job("worker", 120)
+
+    with pytest.raises(ValueError, match="actively processing"):
+        store.reset_backtest_source(
+            experiment["id"], creator["id"], "training_vid_1"
+        )
 
 
 def test_reference_only_calibration_activates_across_two_source_videos(tmp_path):

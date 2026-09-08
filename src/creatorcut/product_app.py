@@ -333,6 +333,62 @@ class ProductApplication:
             )
         return self.processor.evaluate_backtest_holdout(experiment_id)
 
+    def delete_backtest_source(
+        self, account: dict[str, Any], experiment_id: str, source_key: str
+    ) -> dict[str, Any]:
+        """Reset one demo upload and remove only its resolved private media files."""
+        removed = self.store.reset_backtest_source(
+            experiment_id, account["creator_id"], source_key
+        )
+        upload_root = self.upload_dir.resolve()
+        removed_file_count = 0
+        for value in removed["media_paths"]:
+            path = Path(value).resolve()
+            if not path.is_relative_to(upload_root):
+                log_event(
+                    LOGGER,
+                    "backtest_media_cleanup_skipped",
+                    experiment_id=experiment_id,
+                    source_key=source_key,
+                    path=path.as_posix(),
+                )
+                continue
+            try:
+                path.unlink(missing_ok=True)
+                removed_file_count += 1
+            except OSError as error:
+                log_event(
+                    LOGGER,
+                    "backtest_media_cleanup_failed",
+                    experiment_id=experiment_id,
+                    source_key=source_key,
+                    error=str(error)[:300],
+                )
+        work_root = self.processor.work_dir.resolve()
+        job_dir = (work_root / removed["video_id"]).resolve()
+        if job_dir.parent == work_root and job_dir.is_dir():
+            try:
+                shutil.rmtree(job_dir)
+            except OSError as error:
+                log_event(
+                    LOGGER,
+                    "backtest_work_cleanup_failed",
+                    experiment_id=experiment_id,
+                    source_key=source_key,
+                    error=str(error)[:300],
+                )
+        log_event(
+            LOGGER,
+            "backtest_source_upload_deleted",
+            experiment_id=experiment_id,
+            source_key=source_key,
+            video_id=removed["video_id"],
+            removed_file_count=removed_file_count,
+        )
+        return self.store.get_backtest_experiment(
+            experiment_id, account["creator_id"]
+        )
+
     def health(self) -> dict[str, Any]:
         """Return serving readiness plus persistent queue counters."""
         database_ready = self.store.database_ready()
@@ -772,6 +828,38 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                 self._send_json({"error": "Record not found"}, HTTPStatus.NOT_FOUND)
             except ValueError as error:
                 self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            except Exception as error:
+                self._send_json(
+                    {"error": f"The request failed: {str(error)[:300]}"},
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                )
+
+        def do_DELETE(self) -> None:  # noqa: N802
+            path = urlparse(self.path).path
+            try:
+                account = self._require_admin(require_csrf=True)
+                if account is None:
+                    return
+                prefix = "/api/admin/backtests/"
+                marker = "/sources/"
+                if path.startswith(prefix) and marker in path:
+                    remainder = path[len(prefix) :]
+                    experiment_id, source_key = remainder.split(marker, 1)
+                    if not experiment_id.strip("/") or not source_key.strip("/"):
+                        raise ValueError("Choose a demo source upload to delete")
+                    experiment = application.delete_backtest_source(
+                        account,
+                        unquote(experiment_id.strip("/")),
+                        unquote(source_key.strip("/")),
+                    )
+                    experiment.pop("serving_release", None)
+                    self._send_json({"experiment": experiment})
+                    return
+                self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+            except KeyError:
+                self._send_json({"error": "Record not found"}, HTTPStatus.NOT_FOUND)
+            except ValueError as error:
+                self._send_json({"error": str(error)}, HTTPStatus.CONFLICT)
             except Exception as error:
                 self._send_json(
                     {"error": f"The request failed: {str(error)[:300]}"},

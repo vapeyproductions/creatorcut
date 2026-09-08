@@ -228,6 +228,12 @@ def test_http_sessions_enforce_creator_ownership_csrf_and_admin_role(tmp_path):
         {**creator_headers, "X-CSRF-Token": login["csrf_token"]},
     )
     assert status == 403
+    status, _, _ = request(
+        "DELETE",
+        "/api/admin/backtests/missing/sources/training_vid_1",
+        headers={**creator_headers, "X-CSRF-Token": login["csrf_token"]},
+    )
+    assert status == 403
     status, settings, _ = request(
         "GET", "/api/account/contribution-settings", headers=creator_headers
     )
@@ -293,6 +299,15 @@ def test_http_sessions_enforce_creator_ownership_csrf_and_admin_role(tmp_path):
     )
     assert status == 200
     assert experiments == {"experiments": []}
+    status, _, _ = request(
+        "DELETE",
+        "/api/admin/backtests/missing/sources/training_vid_1",
+        headers={
+            "Cookie": admin_cookie,
+            "X-CSRF-Token": admin_login["csrf_token"],
+        },
+    )
+    assert status == 404
 
 
 def test_creator_page_uses_one_time_preference_dialog_without_internal_tools():

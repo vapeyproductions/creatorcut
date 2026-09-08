@@ -11,6 +11,9 @@ claim that two source videos are enough to establish general model accuracy.
    tracker with `Link`, `Views`, `Likes`, `Comments`, and `video ID` columns.
 2. Upload two reference long videos and all corresponding published Short files. Filename stems
    must match the tracker IDs, such as `training_vid_1_clip3.mp4`.
+   Individual files can be removed from the pending selection before upload. A completed source
+   upload can also be deleted and reset for replacement; actively processing uploads must finish
+   first, and a reference cannot be reset until its dependent held-out upload is removed.
 3. CreatorCut uses audio fingerprints to map each Short back to its long-video timestamps. Low
    confidence and likely compound edits remain visible for manual timestamp correction.
 4. Eligible reference intervals are scored with the same frozen transcript, semantic, audio,
