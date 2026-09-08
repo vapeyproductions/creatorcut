@@ -58,6 +58,20 @@
       "learned_ranker_mae_seconds": 4.9358333333
     }
   },
+  "semantic_boundary_selection": {
+    "evaluation": "four folds grouped by source video; full edited-interval MiniLM features",
+    "start": {
+      "adjustment_gate_roc_auc": 0.5183566434,
+      "no_change_mae_seconds": 6.9251041667,
+      "learned_ranker_mae_seconds": 12.9302083333
+    },
+    "end": {
+      "adjustment_gate_roc_auc": 0.7346478873,
+      "no_change_mae_seconds": 2.9213541667,
+      "learned_ranker_mae_seconds": 4.3872916667
+    },
+    "decision": "Do not deploy; full-clip semantics improve the end selector but still lose to no change."
+  },
   "decision": {
     "promote_equal_rank_ensemble_for_next_external_test": true,
     "deploy_learned_boundary_selector": false,

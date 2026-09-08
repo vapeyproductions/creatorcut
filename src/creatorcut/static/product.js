@@ -31,6 +31,9 @@ const elements = {
   clipTemplate: document.querySelector("#clip-template"),
   recentSection: document.querySelector("#recent-section"),
   recentVideos: document.querySelector("#recent-videos"),
+  sourceAnalyticsForm: document.querySelector("#source-analytics-form"),
+  sourceAnalyticsStatus: document.querySelector("#source-analytics-status"),
+  sourceAnalyticsMessage: document.querySelector("#source-analytics-message"),
 };
 
 const savedName = localStorage.getItem("creatorcut_creator_name");
@@ -119,14 +122,36 @@ function formatTime(seconds) {
   return `${minutes}:${String(wholeSeconds).padStart(2, "0")}.${tenths % 10}`;
 }
 
+function formatAdjustment(value) {
+  const number = Number(value || 0);
+  return `${number >= 0 ? "+" : ""}${number.toFixed(3)}`;
+}
+
+function renderSourceAnalytics(summary) {
+  if (!summary) {
+    elements.sourceAnalyticsStatus.textContent =
+      "No source report imported. A report with timestamped audience retention can add a bounded signal.";
+    return;
+  }
+  const views = summary.totals.engaged_views ?? summary.totals.views;
+  const viewCopy = views === undefined ? "unknown exposure" : `${views.toLocaleString()} views`;
+  elements.sourceAnalyticsStatus.textContent =
+    `${summary.original_filename}: ${viewCopy}, ${summary.retention_point_count} retention points. ${summary.learning_status}`;
+}
+
 function renderResults(video) {
   setView("results");
   localStorage.setItem("creatorcut_last_video_id", video.id);
   elements.clips.replaceChildren();
   const summary = video.creator_summary;
-  elements.personalizationStatus.textContent = summary.personalization_active
-    ? `PERSONALIZATION ON — using ${summary.decision_count} prior clip decisions for this creator.`
-    : `PERSONALIZATION WARM-UP — ${summary.decision_count}/3 decisions recorded. Global ranking is currently primary.`;
+  const editorial = summary.personalization_active
+    ? `Editorial preference: active from ${summary.decision_count} prior clip decisions.`
+    : `Editorial preference: ${summary.decision_count}/3 decisions recorded.`;
+  const outcomes = summary.performance_personalization_active
+    ? `Audience performance: active from ${summary.performance_eligible_clip_count} comparable Shorts.`
+    : `Audience performance: ${summary.performance_eligible_clip_count}/${summary.performance_minimum_clip_count} comparable Shorts eligible.`;
+  elements.personalizationStatus.textContent = `${editorial}\n${outcomes}`;
+  renderSourceAnalytics(video.source_analytics);
 
   for (const clip of video.clips) {
     const fragment = elements.clipTemplate.content.cloneNode(true);
@@ -137,6 +162,27 @@ function renderResults(video) {
       `${formatTime(clip.start_seconds)} — ${formatTime(clip.end_seconds)} / ${formatTime(clip.duration_seconds)}`;
     article.querySelector(".clip-explanation").textContent = clip.explanation;
     article.querySelector(".clip-transcript").textContent = `“${clip.transcript_text}”`;
+    article.querySelector(".global-score").textContent = Number(clip.global_score).toFixed(3);
+    article.querySelector(".global-rank").textContent = clip.global_rank
+      ? `#${clip.global_rank} of all candidates`
+      : "Not recorded";
+    article.querySelector(".model-version").textContent =
+      clip.ranking_model_version || "Legacy local run";
+    article.querySelector(".editorial-adjustment").textContent = formatAdjustment(
+      clip.editorial_adjustment,
+    );
+    article.querySelector(".performance-adjustment").textContent = formatAdjustment(
+      clip.performance_adjustment,
+    );
+    article.querySelector(".retention-adjustment").textContent = formatAdjustment(
+      clip.source_retention_adjustment,
+    );
+    const targets = article.querySelector(".target-scores");
+    for (const field of ["hook", "completeness", "payoff", "clarity"]) {
+      const item = document.createElement("span");
+      item.textContent = `${field.toUpperCase()} ${Number(clip.predicted_targets[field]).toFixed(2)}`;
+      targets.append(item);
+    }
 
     const videoElement = article.querySelector(".clip-video");
     videoElement.src = `/api/videos/${encodeURIComponent(video.id)}/source`;
@@ -183,6 +229,9 @@ function renderResults(video) {
     article.querySelector(".performance-form").addEventListener("submit", (event) =>
       savePerformance(article, clip, event),
     );
+    article.querySelector(".clip-analytics-form").addEventListener("submit", (event) =>
+      importClipAnalytics(article, clip, event),
+    );
     elements.clips.append(fragment);
   }
 }
@@ -191,6 +240,7 @@ async function downloadClip(article, clip, button) {
   const start = Number(article.querySelector(".start-input").value);
   const end = Number(article.querySelector(".end-input").value);
   const message = article.querySelector(".clip-message");
+  const exportFormat = article.querySelector("[name='export_format']").value;
   button.disabled = true;
   button.textContent = "PREPARING DOWNLOAD…";
   message.textContent = "Frame-accurate export is being created.";
@@ -198,7 +248,11 @@ async function downloadClip(article, clip, button) {
     const result = await request(`/api/clips/${encodeURIComponent(clip.id)}/export`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ start_seconds: start, end_seconds: end }),
+      body: JSON.stringify({
+        start_seconds: start,
+        end_seconds: end,
+        export_format: exportFormat,
+      }),
     });
     const anchor = document.createElement("a");
     anchor.href = result.download_url;
@@ -206,14 +260,38 @@ async function downloadClip(article, clip, button) {
     document.body.append(anchor);
     anchor.click();
     anchor.remove();
+    const formatCopy = exportFormat === "original" ? "clip" : "vertical clip";
     message.textContent = result.edited
-      ? "Edited clip downloaded. Timestamp changes were saved."
-      : "Clip downloaded. Your selection was saved.";
+      ? `Edited ${formatCopy} downloaded. Timestamp changes were saved.`
+      : `${formatCopy[0].toUpperCase()}${formatCopy.slice(1)} downloaded. Your selection was saved.`;
   } catch (error) {
     message.textContent = error.message || "The clip could not be exported.";
   } finally {
     button.disabled = false;
     button.textContent = "DOWNLOAD CLIP";
+  }
+}
+
+async function importClipAnalytics(article, clip, event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button[type='submit']");
+  const message = article.querySelector(".clip-message");
+  button.disabled = true;
+  try {
+    const payload = await request(`/api/clips/${encodeURIComponent(clip.id)}/analytics`, {
+      method: "POST",
+      body: new FormData(form),
+    });
+    const imported = payload.import;
+    const views = imported.totals.engaged_views ?? imported.totals.views;
+    const viewCopy = views === undefined ? "No view total found." : `${views.toLocaleString()} views found.`;
+    message.textContent = `${viewCopy} ${imported.learning_status}`;
+    form.reset();
+  } catch (error) {
+    message.textContent = error.message || "The analytics export could not be imported.";
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -277,6 +355,30 @@ elements.newVideo.addEventListener("click", () => {
   elements.creatorName.value = localStorage.getItem("creatorcut_creator_name") || "My channel";
   setView("upload");
   loadRecentVideos();
+});
+
+elements.sourceAnalyticsForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!state.video) return;
+  const form = event.currentTarget;
+  const button = form.querySelector("button[type='submit']");
+  button.disabled = true;
+  elements.sourceAnalyticsMessage.textContent = "Reading the YouTube report…";
+  try {
+    const payload = await request(
+      `/api/videos/${encodeURIComponent(state.video.id)}/analytics`,
+      { method: "POST", body: new FormData(form) },
+    );
+    state.video.source_analytics = payload.import;
+    renderSourceAnalytics(payload.import);
+    elements.sourceAnalyticsMessage.textContent = payload.import.learning_status;
+    form.reset();
+  } catch (error) {
+    elements.sourceAnalyticsMessage.textContent =
+      error.message || "The source analytics export could not be imported.";
+  } finally {
+    button.disabled = false;
+  }
 });
 
 async function openRecentVideo(videoId) {

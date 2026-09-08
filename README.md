@@ -4,15 +4,15 @@ CreatorCut is a multimodal ML system that turns long-form creator videos into ra
 
 Rather than treating clip selection as an opaque generative-AI task, CreatorCut frames it as an explainable multimodal learning-to-rank problem. Candidate clips are evaluated using transcript, audio, visual, and structural signals, and the interface shows why each recommendation was made.
 
-## Planned MVP
+## Current product workflow
 
-1. Upload a short MP4 video.
-2. Transcribe it and identify topic boundaries.
+1. Upload a long-form MP4, MOV, M4V, or WebM video.
+2. Transcribe it with word timestamps and generate sentence-aligned candidates.
 3. Generate candidate short-form clips.
 4. Rank candidates using an explainable ML model.
-5. Recommend thumbnail frames.
-6. Generate grounded, platform-specific publishing copy.
-7. Preview and export the resulting content package.
+5. Preview and adjust the three recommended intervals.
+6. Export the source aspect ratio, a vertical 9:16 crop, or a vertical clip with burned captions.
+7. Capture editorial decisions and optional YouTube analytics for bounded personalization.
 
 ## ML system
 
@@ -23,14 +23,13 @@ Rather than treating clip selection as an opaque generative-AI task, CreatorCut 
 - Model explanations and systematic failure analysis
 - Asynchronous inference served through a web application
 
-## Proposed stack
+## Stack
 
-- Python, FastAPI, FFmpeg
-- Whisper-compatible speech recognition
-- Sentence and vision-language embeddings
-- LightGBM ranking model
-- Next.js web interface
-- SQLite initially, with object storage added when deployment requires it
+- Python 3.11, a standard-library HTTP application, PyAV/FFmpeg codecs, and SQLite
+- Faster-Whisper word-level speech recognition
+- frozen MiniLM transcript embeddings plus audio, visual, and structural features
+- grouped ridge and Bradley–Terry ranking experiments
+- plain HTML, CSS, and JavaScript with no frontend framework
 
 ## Project status
 
@@ -58,11 +57,14 @@ creatorcut-web
 ```
 
 The product surface accepts an uploaded video, runs local transcription and frozen-model ranking,
-returns three non-duplicative recommendations, and creates frame-accurate MP4 downloads. A creator
-may adjust either boundary by up to 15 seconds before downloading or reject a recommendation. The
-SQLite product store records which clips were shown, downloaded, edited, or rejected, while keeping
-post-publication performance reports in a separate table. See
-[docs/personalization-and-feedback.md](docs/personalization-and-feedback.md).
+returns three non-duplicative recommendations, exposes global and adaptive score evidence, and
+creates frame-accurate MP4 downloads. A creator may adjust either boundary by up to 15 seconds,
+choose source-ratio or 9:16 captioned export, or reject a recommendation. The SQLite store records
+which clips were shown, downloaded, edited, or rejected while keeping post-publication outcomes in
+a separate table. YouTube Studio ZIP/CSV exports can be attached to the source video or a published
+Short; insufficient reports are saved without influencing ranking. See
+[docs/personalization-and-feedback.md](docs/personalization-and-feedback.md) and
+[docs/youtube-analytics-feedback.md](docs/youtube-analytics-feedback.md).
 
 Validate the source manifest and annotations:
 
@@ -247,6 +249,16 @@ creatorcut-train-boundaries \
 Nearby transcript choices achieve 0.109-second start and 0.212-second end oracle MAE, but the
 learned local-cue selector does not beat leaving the boundaries unchanged. It is therefore not
 deployed; the result motivates semantic full-clip features for each candidate edge.
+
+Evaluate that full-clip semantic boundary hypothesis without changing the deployed model:
+
+```bash
+creatorcut-evaluate-semantic-boundaries
+```
+
+The script re-encodes every candidate-edited interval with the exact frozen semantic model and
+evaluates its boundary choices in folds grouped by source video. Its result remains a development
+experiment until a boundary model beats the no-change baseline and is then confirmed on new videos.
 
 Test whether a ranking-specific objective improves the same hybrid representation:
 

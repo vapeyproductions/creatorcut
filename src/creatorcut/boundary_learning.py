@@ -314,7 +314,10 @@ def build_boundary_artifact(
 
 
 def _fit_choice_ranker(
-    queries: list[dict[str, Any]], l2: float, seed: int = 42
+    queries: list[dict[str, Any]],
+    l2: float,
+    seed: int = 42,
+    feature_fields: tuple[str, ...] = BOUNDARY_FEATURE_FIELDS,
 ) -> dict[str, Any]:
     if not queries:
         raise ValueError("training queries are empty")
@@ -322,7 +325,7 @@ def _fit_choice_ranker(
         raise ValueError("l2 must be positive")
     feature_rows = np.asarray(
         [
-            [option["features"][field] for field in BOUNDARY_FEATURE_FIELDS]
+            [option["features"][field] for field in feature_fields]
             for query in queries
             for option in query["options"]
         ],
@@ -336,7 +339,7 @@ def _fit_choice_ranker(
     for query in queries:
         rows = np.asarray(
             [
-                [option["features"][field] for field in BOUNDARY_FEATURE_FIELDS]
+                [option["features"][field] for field in feature_fields]
                 for option in query["options"]
             ],
             dtype=float,
@@ -382,10 +385,12 @@ def _fit_choice_ranker(
     }
 
 
-def _score_options(query: dict[str, Any], model: dict[str, Any]) -> np.ndarray:
+def _score_options(
+    query: dict[str, Any], model: dict[str, Any], feature_fields: tuple[str, ...]
+) -> np.ndarray:
     rows = np.asarray(
         [
-            [option["features"][field] for field in BOUNDARY_FEATURE_FIELDS]
+            [option["features"][field] for field in feature_fields]
             for option in query["options"]
         ],
         dtype=float,
@@ -394,19 +399,27 @@ def _score_options(query: dict[str, Any], model: dict[str, Any]) -> np.ndarray:
     return standardized @ model["weights"]
 
 
-def _original_option_features(query: dict[str, Any]) -> np.ndarray:
+def _original_option_features(
+    query: dict[str, Any], feature_fields: tuple[str, ...]
+) -> np.ndarray:
     option = min(
         query["options"],
         key=lambda value: abs(
             float(value["time_seconds"]) - float(query["original_time_seconds"])
         ),
     )
-    return np.asarray([option["features"][field] for field in BOUNDARY_FEATURE_FIELDS])
+    return np.asarray([option["features"][field] for field in feature_fields])
 
 
-def _fit_adjustment_gate(queries: list[dict[str, Any]], l2: float) -> dict[str, Any]:
+def _fit_adjustment_gate(
+    queries: list[dict[str, Any]],
+    l2: float,
+    feature_fields: tuple[str, ...] = BOUNDARY_FEATURE_FIELDS,
+) -> dict[str, Any]:
     """Fit a class-balanced logistic gate for whether a boundary needs movement."""
-    features = np.asarray([_original_option_features(query) for query in queries], dtype=float)
+    features = np.asarray(
+        [_original_option_features(query, feature_fields) for query in queries], dtype=float
+    )
     targets = np.asarray([float(query["materially_adjusted"]) for query in queries])
     positives = int(targets.sum())
     negatives = len(targets) - positives
@@ -450,8 +463,10 @@ def _fit_adjustment_gate(queries: list[dict[str, Any]], l2: float) -> dict[str, 
     }
 
 
-def _predict_adjustment_probability(query: dict[str, Any], model: dict[str, Any]) -> float:
-    features = _original_option_features(query)
+def _predict_adjustment_probability(
+    query: dict[str, Any], model: dict[str, Any], feature_fields: tuple[str, ...]
+) -> float:
+    features = _original_option_features(query, feature_fields)
     standardized = (features - model["feature_means"]) / model["feature_scales"]
     margin = float(model["intercept"] + standardized @ model["weights"])
     return 1.0 / (1.0 + math.exp(-min(max(margin, -40.0), 40.0)))
@@ -536,9 +551,23 @@ def cross_validate_boundary_ranker(
     artifact: dict[str, Any], n_splits: int = 4, seed: int = 42, l2: float = 0.3
 ) -> dict[str, Any]:
     """Evaluate start/end choice rankers while holding out complete source videos."""
-    if artifact.get("metadata", {}).get("schema") != BOUNDARY_DATA_SCHEMA:
-        raise ValueError(f"Expected {BOUNDARY_DATA_SCHEMA} artifact")
+    metadata = artifact.get("metadata", {})
+    feature_fields = tuple(metadata.get("feature_fields", BOUNDARY_FEATURE_FIELDS))
+    if metadata.get("schema") not in {
+        BOUNDARY_DATA_SCHEMA,
+        "boundary_candidates_semantic_v2",
+    }:
+        raise ValueError("Expected a supported boundary-candidate artifact")
+    if not feature_fields:
+        raise ValueError("Boundary feature schema is empty")
     queries = artifact.get("queries", [])
+    if any(
+        field not in option.get("features", {})
+        for query in queries
+        for option in query.get("options", [])
+        for field in feature_fields
+    ):
+        raise ValueError("Boundary options do not match the declared feature schema")
     video_ids = sorted({query["video_id"] for query in queries})
     if not 2 <= n_splits <= len(video_ids):
         raise ValueError("n_splits must be between 2 and the number of videos")
@@ -553,8 +582,13 @@ def cross_validate_boundary_ranker(
             train = [q for q in queries if q["kind"] == kind and q["video_id"] not in test_set]
             test = [q for q in queries if q["kind"] == kind and q["video_id"] in test_set]
             adjusted_train = [query for query in train if query["materially_adjusted"]]
-            model = _fit_choice_ranker(adjusted_train, l2=l2, seed=seed + fold_number)
-            gate = _fit_adjustment_gate(train, l2=l2)
+            model = _fit_choice_ranker(
+                adjusted_train,
+                l2=l2,
+                seed=seed + fold_number,
+                feature_fields=feature_fields,
+            )
+            gate = _fit_adjustment_gate(train, l2=l2, feature_fields=feature_fields)
             fold_info["models"][kind] = {
                 "training_queries": len(train),
                 "training_adjusted_queries": len(adjusted_train),
@@ -564,10 +598,12 @@ def cross_validate_boundary_ranker(
                 "gate_negative": gate["training_negative"],
             }
             for query in test:
-                learned_scores = _score_options(query, model)
+                learned_scores = _score_options(query, model, feature_fields)
                 heuristic_scores = _heuristic_scores(query)
                 selector = query["options"][int(np.argmax(learned_scores))]["time_seconds"]
-                adjustment_probability = _predict_adjustment_probability(query, gate)
+                adjustment_probability = _predict_adjustment_probability(
+                    query, gate, feature_fields
+                )
                 learned = (
                     selector
                     if adjustment_probability >= 0.5
@@ -608,12 +644,15 @@ def cross_validate_boundary_ranker(
             [query for query in kind_queries if query["materially_adjusted"]],
             l2=l2,
             seed=seed,
+            feature_fields=feature_fields,
         )
-        gate = _fit_adjustment_gate(kind_queries, l2=l2)
+        gate = _fit_adjustment_gate(
+            kind_queries, l2=l2, feature_fields=feature_fields
+        )
         final_models[kind] = {
             "model_schema": BOUNDARY_MODEL_SCHEMA,
-            "feature_schema": BOUNDARY_DATA_SCHEMA,
-            "feature_fields": list(BOUNDARY_FEATURE_FIELDS),
+            "feature_schema": metadata["schema"],
+            "feature_fields": list(feature_fields),
             "feature_means": model["feature_means"].tolist(),
             "feature_scales": model["feature_scales"].tolist(),
             "standardized_weights": model["weights"].tolist(),

@@ -10,7 +10,8 @@ CreatorCut's local product surface runs one deliberately narrow workflow:
 4. A diversity pass returns three recommendations from different moments in the source.
 5. The creator downloads the original interval, changes its boundaries and downloads the edit, or
    explicitly rejects it.
-6. If the clip is published, the creator can later enter platform performance.
+6. If the clip is published, the creator can enter metrics manually or import a YouTube Studio
+   ZIP/CSV report.
 
 The current build persists structured metadata in SQLite and video bytes on the local filesystem.
 This cleanly maps to a hosted design in which relational records move to D1 or Postgres and video
@@ -53,15 +54,26 @@ Post-publication metrics are deliberately stored separately from editorial decis
 not comparable across creators, platforms, account sizes, publication times, or distribution
 conditions. They must not be poured directly into the quality target.
 
-A future performance model should use platform-specific outcomes such as average viewed percentage,
-shares per view, and comments per view, normalized against the creator's recent baseline. It should
-also retain the model version and publication context. The current schema collects the raw inputs
-without yet using them to influence ranking.
+The current YouTube performance layer uses engaged views as the preferred denominator, then
+within-creator percentiles for stayed-to-watch, average viewed percentage, relative view duration,
+engagement rates, and subscriber conversion. It activates only after five distinct clips have at
+least 50 views or engaged views and a useful outcome metric. The learned preference contribution is
+shrinkage-weighted and capped at 0.25 rating points.
+
+An optional source-video analytics import is handled separately. If a timestamped long-form
+audience-retention curve has at least ten points and 100 source views, it can add a within-video
+attention adjustment capped at 0.20 points. Aggregate source views never identify clip timestamps.
+See [youtube-analytics-feedback.md](youtube-analytics-feedback.md) for the full report mapping,
+thresholds, and official metric definitions.
+
+Both layers are product adaptations, not evidence that the global ranker generalizes. Model release
+claims still require a separate, untouched video-level evaluation.
 
 ## Avoiding a feedback loop
 
 Learning only from top-ranked results would reinforce the current model's beliefs and hide candidates
 it undervalues. A production training loop therefore needs a small exploration allocation, explicit
 impression logging, propensity or rank-bias correction, and evaluation on creators and source videos
-that were not used for fitting. Personal data should be isolated by creator identity, exportable,
-and deletable before hosted accounts are introduced.
+that were not used for fitting. The current store keeps only the latest outcome per clip in the
+active preference estimate and caps every adaptive layer. Personal data should be isolated by
+creator identity, exportable, and deletable before hosted accounts are introduced.

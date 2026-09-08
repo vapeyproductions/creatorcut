@@ -43,12 +43,22 @@
             required
           />
 
+          <label for="source-analytics">Source analytics <span>(optional)</span></label>
+          <input
+            id="source-analytics"
+            name="source_analytics"
+            type="file"
+            accept=".zip,.csv,text/csv,application/zip"
+          />
+
           <button id="upload-button" type="submit">PROCESS VIDEO</button>
           <p id="upload-error" class="error" role="alert" hidden></p>
         </form>
         <p class="small-print">
           Files and feedback stay on this computer in the current build. Processing can take
-          several minutes because transcription and ranking run locally.
+          several minutes because transcription and ranking run locally. If this video has
+          already been published, its YouTube retention export can inform the ranking when the
+          report has enough traffic.
         </p>
         <section id="recent-section" class="recent-section" hidden>
           <h2>Recent runs</h2>
@@ -73,6 +83,18 @@
           <button id="new-video-button" class="plain-button" type="button">PROCESS ANOTHER VIDEO</button>
         </div>
         <p id="personalization-status" class="personalization-status"></p>
+        <details class="source-analytics-details">
+          <summary>Original video analytics</summary>
+          <p id="source-analytics-status" class="small-print"></p>
+          <form id="source-analytics-form" class="analytics-form">
+            <label>
+              YouTube Studio ZIP or CSV
+              <input name="analytics" type="file" accept=".zip,.csv,text/csv,application/zip" required />
+            </label>
+            <button type="submit">IMPORT SOURCE ANALYTICS</button>
+          </form>
+          <p id="source-analytics-message" class="clip-message" role="status"></p>
+        </details>
         <div id="clips"></div>
       </section>
     </main>
@@ -90,6 +112,18 @@
           </div>
           <div class="clip-information">
             <p class="clip-explanation"></p>
+            <details class="model-evidence">
+              <summary>Why this ranking changed</summary>
+              <dl>
+                <div><dt>Global model score</dt><dd class="global-score"></dd></div>
+                <div><dt>Global candidate rank</dt><dd class="global-rank"></dd></div>
+                <div><dt>Ranking model</dt><dd class="model-version"></dd></div>
+                <div><dt>Editorial preference</dt><dd class="editorial-adjustment"></dd></div>
+                <div><dt>Published performance</dt><dd class="performance-adjustment"></dd></div>
+                <div><dt>Source retention</dt><dd class="retention-adjustment"></dd></div>
+              </dl>
+              <div class="target-scores"></div>
+            </details>
             <blockquote class="clip-transcript"></blockquote>
 
             <fieldset>
@@ -101,6 +135,15 @@
               <p class="edit-note">Times are in seconds. Adjust by up to 15 seconds.</p>
             </fieldset>
 
+            <label class="export-format">
+              Download format
+              <select name="export_format">
+                <option value="original">Original framing</option>
+                <option value="vertical">Vertical 9:16</option>
+                <option value="vertical_captions">Vertical 9:16 with captions</option>
+              </select>
+            </label>
+
             <div class="decision-buttons">
               <button class="download-button" type="button">DOWNLOAD CLIP</button>
               <button class="reject-button plain-button" type="button">DON'T USE THIS</button>
@@ -108,7 +151,18 @@
             <p class="clip-message" role="status"></p>
 
             <details class="performance-details">
-              <summary>Posted it? Add performance later</summary>
+              <summary>Posted it? Import its performance</summary>
+              <form class="analytics-form clip-analytics-form">
+                <label>
+                  YouTube Studio ZIP or CSV
+                  <input name="analytics" type="file" accept=".zip,.csv,text/csv,application/zip" required />
+                </label>
+                <button type="submit">IMPORT YOUTUBE ANALYTICS</button>
+              </form>
+              <p class="analytics-note">
+                The report is matched to this clip. Low-traffic reports are stored but cannot
+                influence ranking. Or enter a few metrics manually:
+              </p>
               <form class="performance-form">
                 <label>
                   Platform
@@ -135,8 +189,8 @@
     <footer>
       <p><strong>How feedback is used</strong></p>
       <p>
-        Downloads, rejections, and timestamp changes inform creator preferences. Published results
-        are stored separately so editorial taste is not confused with audience performance.
+        Downloads, rejections, and timestamp changes inform creator preferences. Audience outcomes
+        use a separate, exposure-gated layer. Raw views never become the clip-quality label.
       </p>
     </footer>
 

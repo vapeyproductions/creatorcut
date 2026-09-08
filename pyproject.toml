@@ -12,6 +12,7 @@ dependencies = [
   "av>=18,<19",
   "faster-whisper==1.2.1",
   "numpy>=1.26,<3",
+  "Pillow>=10,<13",
 ]
 
 [project.optional-dependencies]
@@ -50,6 +51,7 @@ creatorcut-analyze-failures = "creatorcut.failure_analysis:main"
 creatorcut-review-failures = "creatorcut.failure_app:main"
 creatorcut-refine-boundaries = "creatorcut.boundary_refinement:main"
 creatorcut-train-boundaries = "creatorcut.boundary_learning:main"
+creatorcut-evaluate-semantic-boundaries = "creatorcut.boundary_semantic:main"
 creatorcut-build-v2-development = "creatorcut.v2_development:main"
 creatorcut-report-v2-development = "creatorcut.v2_report:main"
 creatorcut-inspect-media = "creatorcut.media:main"

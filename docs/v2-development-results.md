@@ -83,13 +83,30 @@ duration, and token cues cannot tell whether a creator wants to include earlier 
 semantically irrelevant ending. The end-edit gate has useful signal, but it is not enough to deploy
 the selector.
 
+### Full-clip semantic follow-up
+
+The next declared experiment encoded the complete clip produced by every candidate boundary using
+the exact frozen MiniLM encoder. It added the candidate interval's frozen-v1 hook, completeness,
+payoff, clarity, overall-quality predictions, their deltas from the original interval, word count,
+and embedding similarity. The same four video-grouped folds were retained.
+
+| Boundary | Edit-gate ROC AUC | No-change MAE | Local-cue learned MAE | Full-clip semantic MAE |
+| --- | ---: | ---: | ---: | ---: |
+| Start | 0.518 | **6.925 s** | 12.771 s | 12.930 s |
+| End | 0.735 | **2.921 s** | 4.936 s | 4.387 s |
+
+Full-clip semantics improve the end selector by 0.549 seconds and leave the already weak start
+selector slightly worse. Neither beats the no-change baseline. This is a useful negative result:
+the missing signal is not solved by reusing the current quality ranker's transcript representation.
+The semantic selector is therefore not deployed or tuned again on these labels.
+
 ## Decision
 
 - Keep frozen model v1 as the current product model until v2 is tested externally.
 - Carry the fixed pointwise/pairwise ensemble into the next unseen-video evaluation.
 - Keep the boundary candidate generator, but do not deploy the learned boundary selector.
-- Add semantic representations of the full clip created by each candidate boundary, rather than
-  tuning more pause weights on these same 96 clips.
+- Carry explicit human-edited boundaries into the next unseen-video collection; do not tune another
+  selector on these same 96 clips.
 - Evaluate the next model once on a new video-level holdout before making a portfolio claim.
 
 The public aggregate metrics are in

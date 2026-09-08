@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlparse
 
+from creatorcut.analytics import MAXIMUM_ANALYTICS_BYTES, parse_youtube_analytics_export
 from creatorcut.annotation_app import parse_byte_range
 from creatorcut.product_pipeline import ProductProcessor, validate_export_interval
 from creatorcut.product_store import ProductStore
@@ -85,6 +86,8 @@ class ProductApplication:
         creator_id: str | None,
         original_filename: str,
         source: Any,
+        source_analytics_filename: str | None = None,
+        source_analytics_report: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Stream an uploaded file to private local storage and queue inference."""
         suffix = Path(original_filename).suffix.lower()
@@ -101,6 +104,15 @@ class ProductApplication:
         video = self.store.create_video(
             creator["id"], Path(original_filename).name, upload_path
         )
+        if source_analytics_filename and source_analytics_report:
+            self.store.save_analytics_import(
+                creator["id"],
+                source_analytics_filename,
+                "source_video",
+                source_analytics_report,
+                video_id=video["id"],
+            )
+            video = self.store.get_video(video["id"])
         self.executor.submit(self.processor.process_video, video["id"])
         return {"creator": creator, "video": video}
 
@@ -179,6 +191,14 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                     clip_id = unquote(path[len("/api/clips/") : -len("/performance")]).strip("/")
                     self._handle_performance(clip_id)
                     return
+                if path.startswith("/api/clips/") and path.endswith("/analytics"):
+                    clip_id = unquote(path[len("/api/clips/") : -len("/analytics")]).strip("/")
+                    self._handle_analytics_import("published_clip", clip_id)
+                    return
+                if path.startswith("/api/videos/") and path.endswith("/analytics"):
+                    video_id = unquote(path[len("/api/videos/") : -len("/analytics")]).strip("/")
+                    self._handle_analytics_import("source_video", video_id)
+                    return
                 self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
             except KeyError:
                 self._send_json({"error": "Record not found"}, HTTPStatus.NOT_FOUND)
@@ -210,11 +230,22 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
             video_field = form["video"] if "video" in form else None
             if video_field is None or not video_field.filename:
                 raise ValueError("Choose a video to upload")
+            analytics_filename = None
+            analytics_report = None
+            analytics_field = form["source_analytics"] if "source_analytics" in form else None
+            if analytics_field is not None and analytics_field.filename:
+                analytics_filename = analytics_field.filename
+                payload = analytics_field.file.read(MAXIMUM_ANALYTICS_BYTES + 1)
+                analytics_report = parse_youtube_analytics_export(
+                    analytics_filename, payload
+                )
             result = application.accept_upload(
                 str(form.getfirst("creator_name", "Local creator")),
                 form.getfirst("creator_id") or None,
                 video_field.filename,
                 video_field.file,
+                analytics_filename,
+                analytics_report,
             )
             self._send_json(result, HTTPStatus.ACCEPTED)
 
@@ -234,6 +265,7 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
 
         def _handle_export(self, clip_id: str) -> None:
             value = self._read_json()
+            export_format = value.get("export_format", "original")
             clip = application.store.get_clip(clip_id)
             video = application.store.get_video(clip["video_id"])
             start, end = validate_export_interval(
@@ -242,7 +274,9 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                 value.get("end_seconds"),
                 float(video["duration_seconds"]),
             )
-            export_path = application.processor.export_clip(clip_id, start, end)
+            export_path = application.processor.export_clip(
+                clip_id, start, end, export_format
+            )
             edited = (
                 abs(start - float(clip["start_seconds"])) >= 0.05
                 or abs(end - float(clip["end_seconds"])) >= 0.05
@@ -256,6 +290,7 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                     "rank": clip["rank"],
                     "start_adjustment_seconds": round(start - clip["start_seconds"], 3),
                     "end_adjustment_seconds": round(end - clip["end_seconds"], 3),
+                    "export_format": export_format,
                 },
             )
             self._send_json(
@@ -266,6 +301,49 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
             report = validate_performance_report(self._read_json())
             application.store.save_performance_report(clip_id, report)
             self._send_json({"saved": True}, HTTPStatus.CREATED)
+
+        def _handle_analytics_import(self, report_role: str, target_id: str) -> None:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            if content_length <= 0 or content_length > MAXIMUM_ANALYTICS_BYTES + 65_536:
+                raise ValueError("Analytics uploads must be 20 MB or smaller")
+            content_type = self.headers.get("Content-Type", "")
+            if not content_type.startswith("multipart/form-data"):
+                raise ValueError("Analytics upload must use multipart form data")
+            form = cgi.FieldStorage(
+                fp=self.rfile,
+                headers=self.headers,
+                environ={
+                    "REQUEST_METHOD": "POST",
+                    "CONTENT_TYPE": content_type,
+                    "CONTENT_LENGTH": str(content_length),
+                },
+                keep_blank_values=True,
+            )
+            analytics_field = form["analytics"] if "analytics" in form else None
+            if analytics_field is None or not analytics_field.filename:
+                raise ValueError("Choose a YouTube Studio ZIP or CSV export")
+            payload = analytics_field.file.read(MAXIMUM_ANALYTICS_BYTES + 1)
+            report = parse_youtube_analytics_export(analytics_field.filename, payload)
+            if report_role == "published_clip":
+                clip = application.store.get_clip(target_id)
+                creator_id = clip["creator_id"]
+                saved = application.store.save_analytics_import(
+                    creator_id,
+                    analytics_field.filename,
+                    report_role,
+                    report,
+                    clip_id=target_id,
+                )
+            else:
+                video = application.store.get_video(target_id)
+                saved = application.store.save_analytics_import(
+                    video["creator_id"],
+                    analytics_field.filename,
+                    report_role,
+                    report,
+                    video_id=target_id,
+                )
+            self._send_json({"saved": True, "import": saved}, HTTPStatus.CREATED)
 
         def _read_json(self) -> dict[str, Any]:
             content_length = int(self.headers.get("Content-Length", "0"))

@@ -53,7 +53,11 @@ def test_store_persists_upload_clips_and_presentations(tmp_path):
     assert store.creator_summary(creator["id"]) == {
         "decision_count": 0,
         "performance_report_count": 0,
+        "analytics_import_count": 0,
         "personalization_active": False,
+        "performance_personalization_active": False,
+        "performance_eligible_clip_count": 0,
+        "performance_minimum_clip_count": 5,
     }
     assert [item["id"] for item in store.list_videos(creator["id"])] == [video["id"]]
 
@@ -136,6 +140,169 @@ def test_store_keeps_performance_separate_from_editorial_decisions(tmp_path):
 
     assert summary["performance_report_count"] == 1
     assert summary["decision_count"] == 0
+
+
+def test_high_exposure_import_without_an_outcome_metric_stays_ineligible(tmp_path):
+    store, creator, _, clips = populated_store(tmp_path)
+    report = {
+        "recognized_row_count": 1,
+        "totals": {"views": 10_000, "thumbnail_impressions": 20_000},
+        "retention_rows": [],
+        "warnings": ["No timestamped audience-retention curve was included"],
+    }
+
+    saved = store.save_analytics_import(
+        creator["id"],
+        "reach.csv",
+        "published_clip",
+        report,
+        clip_id=clips[0]["id"],
+    )
+
+    assert saved["learning_eligible"] is False
+    assert "outcome metric" in saved["learning_status"]
+
+
+def test_source_retention_signal_is_bounded_and_requires_evidence(tmp_path):
+    store, creator, video, _ = populated_store(tmp_path)
+    report = {
+        "recognized_row_count": 101,
+        "totals": {"views": 1_000},
+        "retention_rows": [
+            {
+                "elapsed_video_time_ratio": index / 100,
+                "relative_retention_performance": index / 100,
+            }
+            for index in range(1, 101)
+        ],
+        "warnings": [],
+    }
+    saved = store.save_analytics_import(
+        creator["id"], "retention.zip", "source_video", report, video_id=video["id"]
+    )
+    candidates = [
+        {
+            "candidate_id": "early",
+            "start_seconds": 10,
+            "end_seconds": 40,
+            "personalized_score": 3.5,
+        },
+        {
+            "candidate_id": "late",
+            "start_seconds": 130,
+            "end_seconds": 160,
+            "personalized_score": 3.5,
+        },
+    ]
+
+    adjusted, metadata = store.apply_source_retention_signal(video["id"], candidates)
+
+    assert saved["learning_eligible"] is True
+    assert metadata["active"] is True
+    assert adjusted[1]["personalized_score"] > adjusted[0]["personalized_score"]
+    assert all(abs(item["source_retention_adjustment"]) <= 0.2 for item in adjusted)
+
+
+def test_short_import_needs_outcome_data_and_one_video(tmp_path):
+    store, creator, _, clips = populated_store(tmp_path)
+    sparse_report = {
+        "recognized_row_count": 1,
+        "totals": {"views": 500},
+        "report_rows": [{"views": 500}],
+        "retention_rows": [],
+        "warnings": [],
+    }
+
+    saved = store.save_analytics_import(
+        creator["id"],
+        "short.csv",
+        "published_clip",
+        sparse_report,
+        clip_id=clips[0]["id"],
+    )
+
+    assert saved["learning_eligible"] is False
+    assert "outcome metric" in saved["learning_status"]
+
+    multiple_videos = {
+        **sparse_report,
+        "report_rows": [
+            {"video_id": "one", "views": 250},
+            {"video_id": "two", "views": 250},
+        ],
+    }
+    with pytest.raises(ValueError, match="filtered to one"):
+        store.save_analytics_import(
+            creator["id"],
+            "channel.csv",
+            "published_clip",
+            multiple_videos,
+            clip_id=clips[0]["id"],
+        )
+
+
+def test_performance_layer_learns_only_after_five_comparable_shorts(tmp_path):
+    store, creator, _, clips = populated_store(tmp_path)
+    all_clips = list(clips)
+    source = tmp_path / "second.mp4"
+    source.touch()
+    second_video = store.create_video(creator["id"], "second.mp4", source)
+    store.update_video(second_video["id"], "ranking_candidates", duration_seconds=180.0)
+    extra = [ranked_clip(rank, hook, 20.0 * rank) for rank, hook in ((1, 2.0), (2, 4.0))]
+    for clip in extra:
+        clip["id"] = f"{second_video['id']}_clip_{clip['rank']}"
+    store.save_ranked_clips(second_video["id"], extra)
+    all_clips.extend(extra)
+
+    ordered_clips = sorted(
+        all_clips, key=lambda item: item["predicted_targets"]["hook"]
+    )
+    for index, clip in enumerate(ordered_clips):
+        store.save_performance_report(
+            clip["id"],
+            {
+                "platform": "youtube",
+                "views": 500,
+                "engaged_views": 300,
+                "average_view_percentage": 45 + index * 10,
+                "likes": 20 + index * 5,
+                "comments": 2 + index,
+                "shares": 3 + index,
+                "published_at": None,
+            },
+        )
+
+    candidates = [
+        {
+            "candidate_id": "high_hook",
+            "duration_seconds": 30.0,
+            "global_score": 3.5,
+            "predicted_targets": {
+                "hook": 5.0,
+                "completeness": 4.0,
+                "payoff": 4.0,
+                "clarity": 4.0,
+            },
+        },
+        {
+            "candidate_id": "low_hook",
+            "duration_seconds": 30.0,
+            "global_score": 3.5,
+            "predicted_targets": {
+                "hook": 1.0,
+                "completeness": 4.0,
+                "payoff": 4.0,
+                "clarity": 4.0,
+            },
+        },
+    ]
+
+    personalized, metadata = store.personalize_candidates(creator["id"], candidates)
+
+    assert metadata["performance"]["active"] is True
+    assert personalized[0]["performance_adjustment"] > personalized[1][
+        "performance_adjustment"
+    ]
 
 
 def test_store_rejects_unknown_editorial_event(tmp_path):

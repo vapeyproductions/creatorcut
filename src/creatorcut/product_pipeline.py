@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import math
 import threading
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import av
+import numpy as np
 
 from creatorcut.candidates import (
     generate_candidates,
@@ -32,6 +34,9 @@ MAXIMUM_EXPORT_ADJUSTMENT_SECONDS = 15.0
 MINIMUM_EXPORT_DURATION_SECONDS = 5.0
 MAXIMUM_EXPORT_DURATION_SECONDS = 90.0
 MAXIMUM_EXPORT_EDGE_PIXELS = 1_920
+VERTICAL_EXPORT_WIDTH = 720
+VERTICAL_EXPORT_HEIGHT = 1_280
+SUPPORTED_EXPORT_FORMATS = {"original", "vertical", "vertical_captions"}
 
 
 def candidate_prefilter_score(candidate: dict[str, Any]) -> float:
@@ -162,8 +167,136 @@ def export_dimensions(width: int, height: int) -> tuple[int, int]:
     return output_width, output_height
 
 
-def transcode_clip(source_path: Path, output_path: Path, start: float, end: float) -> None:
+def build_caption_cues(
+    transcript: dict[str, Any], start: float, end: float
+) -> list[dict[str, Any]]:
+    """Group word-timestamped ASR output into short on-screen caption cues."""
+    words = [
+        word
+        for segment in transcript.get("segments", [])
+        for word in segment.get("words", [])
+        if float(word["end"]) > start and float(word["start"]) < end
+    ]
+    cues: list[dict[str, Any]] = []
+    group: list[dict[str, Any]] = []
+    for word in words:
+        group.append(word)
+        text = str(word.get("word", "")).strip()
+        group_duration = float(group[-1]["end"]) - float(group[0]["start"])
+        if len(group) >= 7 or group_duration >= 2.4 or text.endswith((".", "?", "!")):
+            cues.append(
+                {
+                    "start": max(start, float(group[0]["start"])),
+                    "end": min(end, float(group[-1]["end"]) + 0.08),
+                    "text": " ".join(str(item.get("word", "")).strip() for item in group),
+                }
+            )
+            group = []
+    if group:
+        cues.append(
+            {
+                "start": max(start, float(group[0]["start"])),
+                "end": min(end, float(group[-1]["end"]) + 0.08),
+                "text": " ".join(str(item.get("word", "")).strip() for item in group),
+            }
+        )
+    return cues
+
+
+def _active_caption(cues: list[dict[str, Any]], frame_time: float) -> str | None:
+    for cue in cues:
+        if float(cue["start"]) <= frame_time <= float(cue["end"]):
+            return str(cue["text"])
+    return None
+
+
+@lru_cache(maxsize=1)
+def _caption_font() -> Any:
+    from PIL import ImageFont
+
+    for path in (
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "DejaVuSans-Bold.ttf",
+    ):
+        try:
+            return ImageFont.truetype(path, 48)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _vertical_image(frame: av.VideoFrame, caption: str | None) -> np.ndarray:
+    """Center-crop a frame to 9:16 and optionally burn in readable captions."""
+    from PIL import Image, ImageDraw
+
+    pixels = frame.to_ndarray(format="rgb24")
+    height, width = pixels.shape[:2]
+    target_ratio = VERTICAL_EXPORT_WIDTH / VERTICAL_EXPORT_HEIGHT
+    if width / height > target_ratio:
+        crop_width = max(1, int(round(height * target_ratio)))
+        left = max(0, (width - crop_width) // 2)
+        pixels = pixels[:, left : left + crop_width]
+    else:
+        crop_height = max(1, int(round(width / target_ratio)))
+        top = max(0, (height - crop_height) // 2)
+        pixels = pixels[top : top + crop_height, :]
+
+    image = Image.fromarray(pixels).resize(
+        (VERTICAL_EXPORT_WIDTH, VERTICAL_EXPORT_HEIGHT), Image.Resampling.LANCZOS
+    )
+    if caption:
+        draw = ImageDraw.Draw(image)
+        font = _caption_font()
+        words = caption.split()
+        lines: list[str] = []
+        current = ""
+        for word in words:
+            proposal = f"{current} {word}".strip()
+            if current and draw.textbbox((0, 0), proposal, font=font)[2] > 620:
+                lines.append(current)
+                current = word
+            else:
+                current = proposal
+        if current:
+            lines.append(current)
+        lines = lines[-3:]
+        text = "\n".join(lines)
+        box = draw.multiline_textbbox((0, 0), text, font=font, spacing=8, align="center")
+        text_width = box[2] - box[0]
+        text_height = box[3] - box[1]
+        x = (VERTICAL_EXPORT_WIDTH - text_width) / 2
+        y = VERTICAL_EXPORT_HEIGHT * 0.72 - text_height / 2
+        padding = 18
+        draw.rounded_rectangle(
+            (x - padding, y - padding, x + text_width + padding, y + text_height + padding),
+            radius=10,
+            fill=(0, 0, 0),
+        )
+        draw.multiline_text(
+            (x, y),
+            text,
+            font=font,
+            fill="white",
+            stroke_width=2,
+            stroke_fill="black",
+            spacing=8,
+            align="center",
+        )
+    return np.asarray(image)
+
+
+def transcode_clip(
+    source_path: Path,
+    output_path: Path,
+    start: float,
+    end: float,
+    export_format: str = "original",
+    caption_cues: list[dict[str, Any]] | None = None,
+) -> None:
     """Decode and re-encode a frame-accurate MP4 interval using bundled PyAV codecs."""
+    if not isinstance(export_format, str) or export_format not in SUPPORTED_EXPORT_FORMATS:
+        raise ValueError("Choose a supported export format")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = output_path.with_suffix(".tmp.mp4")
     with av.open(str(source_path)) as source, av.open(str(temporary_path), mode="w") as output:
@@ -174,10 +307,14 @@ def transcode_clip(source_path: Path, output_path: Path, start: float, end: floa
 
         rate = video_input.average_rate or 30
         video_output = output.add_stream("libx264", rate=rate)
-        video_output.width, video_output.height = export_dimensions(
-            video_input.codec_context.width,
-            video_input.codec_context.height,
-        )
+        if export_format == "original":
+            video_output.width, video_output.height = export_dimensions(
+                video_input.codec_context.width,
+                video_input.codec_context.height,
+            )
+        else:
+            video_output.width = VERTICAL_EXPORT_WIDTH
+            video_output.height = VERTICAL_EXPORT_HEIGHT
         video_output.pix_fmt = "yuv420p"
         video_output.options = {"crf": "21", "preset": "veryfast"}
 
@@ -208,6 +345,19 @@ def transcode_clip(source_path: Path, output_path: Path, start: float, end: floa
                 if frame_time >= end:
                     completed.add(packet.stream.index)
                     continue
+                if packet.stream.index == video_input.index and export_format != "original":
+                    caption = (
+                        _active_caption(caption_cues or [], frame_time)
+                        if export_format == "vertical_captions"
+                        else None
+                    )
+                    original_pts = frame.pts
+                    original_time_base = frame.time_base
+                    frame = av.VideoFrame.from_ndarray(
+                        _vertical_image(frame, caption), format="rgb24"
+                    )
+                    frame.pts = original_pts
+                    frame.time_base = original_time_base
                 if frame.pts is not None and frame.time_base is not None:
                     frame.pts -= int(round(start / float(frame.time_base)))
                 for encoded_packet in output_stream.encode(frame):
@@ -336,8 +486,26 @@ class ProductProcessor:
                 }
                 for prediction in predictions
             ]
+            global_order = sorted(
+                scored,
+                key=lambda candidate: (
+                    -float(candidate["global_score"]),
+                    candidate["candidate_id"],
+                ),
+            )
+            global_rank_by_id = {
+                candidate["candidate_id"]: rank
+                for rank, candidate in enumerate(global_order, start=1)
+            }
+            scored = [
+                {**candidate, "global_rank": global_rank_by_id[candidate["candidate_id"]]}
+                for candidate in scored
+            ]
             video = self.store.get_video(video_id)
             personalized, _ = self.store.personalize_candidates(video["creator_id"], scored)
+            personalized, _ = self.store.apply_source_retention_signal(
+                video_id, personalized
+            )
             selected = select_diverse_top_clips(personalized)
             ranked = []
             for rank, clip in enumerate(selected, start=1):
@@ -346,6 +514,9 @@ class ProductProcessor:
                         **clip,
                         "id": f"{video_id}_clip_{rank}",
                         "rank": rank,
+                        "ranking_model_version": frozen_model.get(
+                            "freeze_schema", "unversioned_frozen_model"
+                        ),
                         "explanation": explain_prediction(clip["predicted_targets"]),
                     }
                 )
@@ -354,7 +525,13 @@ class ProductProcessor:
         except Exception as error:  # background failures must become visible job state
             self.store.update_video(video_id, "failed", error_message=str(error)[:500])
 
-    def export_clip(self, clip_id: str, start: float, end: float) -> Path:
+    def export_clip(
+        self,
+        clip_id: str,
+        start: float,
+        end: float,
+        export_format: str = "original",
+    ) -> Path:
         """Validate and cache one original or adjusted clip download."""
         clip = self.store.get_clip(clip_id)
         video = self.store.get_video(clip["video_id"])
@@ -364,11 +541,26 @@ class ProductProcessor:
             end,
             float(video["duration_seconds"]),
         )
+        if not isinstance(export_format, str) or export_format not in SUPPORTED_EXPORT_FORMATS:
+            raise ValueError("Choose a supported export format")
         export_dir = self.work_dir / "exports"
         export_name = (
-            f"{clip_id}_{round(checked_start * 1000)}_{round(checked_end * 1000)}.mp4"
+            f"{clip_id}_{round(checked_start * 1000)}_{round(checked_end * 1000)}_"
+            f"{export_format}.mp4"
         )
         output_path = export_dir / export_name
         if not output_path.exists():
-            transcode_clip(Path(clip["media_path"]), output_path, checked_start, checked_end)
+            cues: list[dict[str, Any]] = []
+            if export_format == "vertical_captions":
+                transcript_path = self.work_dir / clip["video_id"] / "transcript.json"
+                transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
+                cues = build_caption_cues(transcript, checked_start, checked_end)
+            transcode_clip(
+                Path(clip["media_path"]),
+                output_path,
+                checked_start,
+                checked_end,
+                export_format,
+                cues,
+            )
         return output_path

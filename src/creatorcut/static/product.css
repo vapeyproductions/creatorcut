@@ -255,6 +255,23 @@ progress::-moz-progress-bar {
   border: 1px dashed #111;
   font-family: "Courier New", monospace;
   font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-line;
+}
+
+.source-analytics-details {
+  margin: -12px 0 32px;
+  padding: 12px 0 16px;
+  border-bottom: 1px dotted #111;
+}
+
+.source-analytics-details summary,
+.model-evidence summary {
+  cursor: pointer;
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+  font-weight: bold;
+  text-transform: uppercase;
 }
 
 .clip-result {
@@ -306,6 +323,45 @@ progress::-moz-progress-bar {
   font-size: 19px;
 }
 
+.model-evidence {
+  margin: 14px 0;
+  padding: 10px 12px;
+  border: 1px solid #111;
+  background: #f5f4ef;
+}
+
+.model-evidence dl {
+  margin: 12px 0 8px;
+}
+
+.model-evidence dl div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  padding: 5px 0;
+  border-top: 1px dotted #c5c2b8;
+  font-family: "Courier New", monospace;
+  font-size: 11px;
+}
+
+.model-evidence dt,
+.model-evidence dd {
+  margin: 0;
+}
+
+.target-scores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.target-scores span {
+  padding: 3px 5px;
+  border: 1px solid #111;
+  font-family: "Courier New", monospace;
+  font-size: 10px;
+}
+
 .clip-transcript {
   max-height: 130px;
   overflow: auto;
@@ -355,6 +411,14 @@ legend span {
   align-items: center;
 }
 
+.export-format {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  margin: 16px 0;
+}
+
 .download-button {
   color: #fff;
   background: #111;
@@ -382,6 +446,27 @@ legend span {
 .performance-details summary {
   cursor: pointer;
   font-weight: bold;
+}
+
+.analytics-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  max-width: 680px;
+  margin-top: 12px;
+}
+
+.analytics-form label {
+  display: grid;
+  gap: 4px;
+}
+
+.analytics-note {
+  margin: 12px 0 4px;
+  font-family: "Courier New", monospace;
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .performance-form {
@@ -436,6 +521,7 @@ footer p {
   #upload-form,
   .clip-columns,
   .performance-form,
+  .analytics-form,
   footer {
     grid-template-columns: 1fr;
   }
