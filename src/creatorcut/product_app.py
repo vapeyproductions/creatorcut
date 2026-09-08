@@ -299,6 +299,7 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
 
         def _handle_performance(self, clip_id: str) -> None:
             report = validate_performance_report(self._read_json())
+            application.processor.ensure_clip_semantic_embedding(clip_id)
             application.store.save_performance_report(clip_id, report)
             self._send_json({"saved": True}, HTTPStatus.CREATED)
 
@@ -327,6 +328,7 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
             if report_role == "published_clip":
                 clip = application.store.get_clip(target_id)
                 creator_id = clip["creator_id"]
+                application.processor.ensure_clip_semantic_embedding(target_id)
                 saved = application.store.save_analytics_import(
                     creator_id,
                     analytics_field.filename,

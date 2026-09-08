@@ -433,6 +433,21 @@ class ProductStore:
         clip["predicted_targets"] = json.loads(clip.pop("predicted_targets_json"))
         return clip
 
+    def save_clip_semantic_embedding(
+        self, clip_id: str, embedding: list[float]
+    ) -> None:
+        """Backfill a frozen transcript embedding for recommendations made before this feature."""
+        values = [float(item) for item in embedding]
+        if not values or not all(math.isfinite(item) for item in values):
+            raise ValueError("The semantic embedding is invalid")
+        with self._write_lock, self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE clips SET semantic_embedding_json = ? WHERE id = ?",
+                (json.dumps(values), clip_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(clip_id)
+
     def record_editorial_event(
         self,
         clip_id: str,

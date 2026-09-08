@@ -403,6 +403,30 @@ class ProductProcessor:
                 )
             return self._whisper_model
 
+    def ensure_clip_semantic_embedding(self, clip_id: str) -> None:
+        """Backfill the frozen semantic representation for a previously ranked clip."""
+        clip = self.store.get_clip(clip_id)
+        if clip.get("semantic_embedding_json"):
+            return
+        frozen_model = json.loads(self.frozen_model_path.read_text(encoding="utf-8"))
+        semantic_metadata = frozen_model["semantic_feature_metadata"]
+        tokenizer_path, encoder_path = _download_model_files(
+            semantic_metadata["model_id"],
+            semantic_metadata["revision"],
+            semantic_metadata["onnx_filename"],
+            self.semantic_cache,
+        )
+        embedding = encode_texts_onnx(
+            [clip["transcript_text"]],
+            tokenizer_path,
+            encoder_path,
+            batch_size=1,
+            maximum_length=semantic_metadata.get("maximum_length", DEFAULT_MAX_LENGTH),
+        )[0]
+        self.store.save_clip_semantic_embedding(
+            clip_id, embedding.astype(float).tolist()
+        )
+
     def process_video(self, video_id: str) -> None:
         """Run validation, ASR, candidate generation, frozen scoring, and personalization."""
         try:

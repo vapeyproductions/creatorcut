@@ -104,6 +104,10 @@ Users can attach source analytics during upload or after processing and can atta
 Short report to any returned clip. A newly imported report affects the next applicable ranking run;
 it never silently rewrites recommendations already shown.
 
+New recommendations persist their frozen transcript embedding when they are ranked. If analytics
+are attached to a recommendation produced by an earlier local build, CreatorCut backfills that
+embedding before saving the outcome so legacy recommendations can participate in semantic trends.
+
 ## Leakage and feedback-loop controls
 
 - The frozen global model remains unchanged by product analytics.

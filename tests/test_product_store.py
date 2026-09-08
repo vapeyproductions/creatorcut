@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from creatorcut.product_store import ProductStore
@@ -72,6 +74,19 @@ def test_store_persists_upload_clips_and_presentations(tmp_path):
         "positive_semantic_trends": [],
     }
     assert [item["id"] for item in store.list_videos(creator["id"])] == [video["id"]]
+    assert "semantic_embedding_json" not in saved["clips"][0]
+    assert json.loads(store.get_clip(clips[0]["id"])["semantic_embedding_json"])
+
+
+def test_store_can_backfill_a_legacy_clip_embedding(tmp_path):
+    store, _, _, clips = populated_store(tmp_path)
+
+    store.save_clip_semantic_embedding(clips[0]["id"], [0.6, 0.8])
+
+    assert json.loads(store.get_clip(clips[0]["id"])["semantic_embedding_json"]) == [
+        0.6,
+        0.8,
+    ]
 
 
 def test_editorial_feedback_activates_bounded_personalization(tmp_path):
