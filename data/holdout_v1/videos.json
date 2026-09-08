@@ -1,0 +1,104 @@
+[
+  {
+    "video_id": "video_021",
+    "source_url": null,
+    "local_filename": "data/raw/video_021.mp4",
+    "media_sha256": "98dd0f1a68ca6c6be759def83dcb0e4c8258b4db5a1b29c3eb78d98a42f23de2"
+  },
+  {
+    "video_id": "video_022",
+    "source_url": null,
+    "local_filename": "data/raw/video_022.mp4",
+    "media_sha256": "89032391be0282189abd6de42e0cc19fbe40566602a0e7a920ae23f8121c663d"
+  },
+  {
+    "video_id": "video_023",
+    "source_url": null,
+    "local_filename": "data/raw/video_023.mp4",
+    "media_sha256": "baec74792b837e96a12f84f6e74f5143548b5ce3fce2959991d17eb209e8fdeb"
+  },
+  {
+    "video_id": "video_024",
+    "source_url": null,
+    "local_filename": "data/raw/video_024.mp4",
+    "media_sha256": "13d542d22198753cb7373698418ab1ca5a7fefb19ab79497cca67140b7dcef73"
+  },
+  {
+    "video_id": "video_025",
+    "source_url": null,
+    "local_filename": "data/raw/video_025.mp4",
+    "media_sha256": "f044e98e359a1986bae6410909823cb1bc88276ee261f7569c5e8ae680dd08a9"
+  },
+  {
+    "video_id": "video_026",
+    "source_url": null,
+    "local_filename": "data/raw/video_026.mp4",
+    "media_sha256": "c4d3d9ccd0ff0e470d2b634ba5756cda691842af0e23c9c35caa59ed415dd658"
+  },
+  {
+    "video_id": "video_027",
+    "source_url": null,
+    "local_filename": "data/raw/video_027.mp4",
+    "media_sha256": "5ddf381adff5ef46ed3cdbebed7c2682fa37d25ebe7f3fc22716a3d9214852c7"
+  },
+  {
+    "video_id": "video_028",
+    "source_url": null,
+    "local_filename": "data/raw/video_028.mp4",
+    "media_sha256": "6a85970ffade22fb5c596ef2df4a2ecc040705e0b61519cc2e6f7466a8b85939"
+  },
+  {
+    "video_id": "video_029",
+    "source_url": null,
+    "local_filename": "data/raw/video_029.mp4",
+    "media_sha256": "f9ce78c96f0ab820fd89544e4377c9165389f4800f19da451603d3b47b217293"
+  },
+  {
+    "video_id": "video_030",
+    "source_url": null,
+    "local_filename": "data/raw/video_030.mp4",
+    "media_sha256": "8ede47eeeec0ebab083b06e83c4ade3abf7130595e5aa02e1c4f6a0d02a31e40"
+  },
+  {
+    "video_id": "video_031",
+    "source_url": null,
+    "local_filename": "data/raw/video_031.mp4",
+    "media_sha256": "04e0a5e893a98531a4d8a8d21772eed21210a21699a6c7ea29b45926ba83dccb"
+  },
+  {
+    "video_id": "video_032",
+    "source_url": null,
+    "local_filename": "data/raw/video_032.mp4",
+    "media_sha256": "d7b725752bc1ec458e1f1ff92e8abc7d2114d5e6229aa610abfbd315d70abce7"
+  },
+  {
+    "video_id": "video_033",
+    "source_url": null,
+    "local_filename": "data/raw/video_033.mp4",
+    "media_sha256": "328b0ef9e04021d344d3a5f351274437e5bebeca9a26dc36186612b45202e727"
+  },
+  {
+    "video_id": "video_034",
+    "source_url": null,
+    "local_filename": "data/raw/video_034.mp4",
+    "media_sha256": "88ff3d6e0f41ab25308c9cfdc782d79dd1ec88d7d672b456c383ac695ebd5bc0"
+  },
+  {
+    "video_id": "video_035",
+    "source_url": null,
+    "local_filename": "data/raw/video_035.mp4",
+    "media_sha256": "0af7b437bc42c11b291211d3070ecfe7022d31cf7af99115b1b4e7f716597e06"
+  },
+  {
+    "video_id": "video_036",
+    "source_url": null,
+    "local_filename": "data/raw/video_036.mp4",
+    "media_sha256": "ff043b13aa0acd5e6c4e041e7b7ff6c99cf89744e43f2b554e64a9b7bd039df8"
+  },
+  {
+    "video_id": "video_037",
+    "source_url": null,
+    "local_filename": "data/raw/video_037.mp4",
+    "media_sha256": "3fbe6412373782e5a9943ef00db0a887257ceff8b7a6e66a343d89d7a3fe0ee7"
+  }
+]

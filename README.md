@@ -165,6 +165,22 @@ rule therefore keeps and freezes the text+semantic ridge model for evaluation on
 [docs/audio-feature-ablation.md](docs/audio-feature-ablation.md) for the controlled experiment and
 [docs/frozen-model-v1.md](docs/frozen-model-v1.md) for the immutable test contract.
 
+Evaluate the frozen ranker on a new, separately registered corpus:
+
+```bash
+creatorcut-encode-transcripts \
+  --input data/processed/holdout_v1/annotation_queue.jsonl \
+  --output data/processed/holdout_v1/semantic_embeddings.json
+creatorcut-score-holdout
+# Complete the blind reviews only after predictions have been sealed.
+creatorcut-evaluate-holdout
+```
+
+The scorer accepts no review or label input. It verifies unseen video IDs, the exact frozen feature
+and encoder schemas, and serialized v1 parameters before writing private predictions. A public
+SHA-256 commitment can then prove those predictions existed before the labels. See
+[docs/external-holdout-protocol.md](docs/external-holdout-protocol.md).
+
 Test whether a ranking-specific objective improves the same hybrid representation:
 
 ```bash
