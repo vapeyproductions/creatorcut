@@ -60,14 +60,28 @@ creatorcut-web
 The product surface accepts an uploaded video, runs local transcription and frozen-model ranking,
 returns three non-duplicative recommendations, exposes global and adaptive score evidence, and
 creates frame-accurate MP4 downloads. A creator may adjust either boundary by up to 15 seconds,
-choose source-ratio or 9:16 captioned export, or reject a recommendation. The SQLite store records
-which clips were shown, downloaded, edited, or rejected while keeping post-publication outcomes in
-a separate table. YouTube Studio ZIP/CSV exports can be attached to the source video or a published
-Short; insufficient reports are saved without influencing ranking. After enough comparable Shorts,
-the product learns both interpretable quality preferences and similarity to semantically related
-high-performing clips, while displaying recurring positive words and phrases. See
+choose source-ratio or 9:16 captioned export, reject a recommendation, or define a completely custom
+interval. Finishing a review explicitly records untouched model options as weak unselected evidence;
+ordinary missing clicks stay unlabeled. The SQLite store keeps presentations, choices, exact edits,
+custom intervals, model lineage, and post-publication outcomes as separate records. YouTube Studio
+ZIP/CSV exports can be attached to the source video or a published Short; insufficient reports are
+saved without influencing ranking. After enough comparable Shorts, the product learns both
+interpretable quality preferences and similarity to semantically related high-performing clips,
+then displays an evidence-derived summary and recurring stronger/weaker terms. See
 [docs/personalization-and-feedback.md](docs/personalization-and-feedback.md) and
-[docs/youtube-analytics-feedback.md](docs/youtube-analytics-feedback.md).
+[docs/youtube-analytics-feedback.md](docs/youtube-analytics-feedback.md). Runtime data contracts,
+event semantics, model lineage, and the local-to-hosted boundary are documented in
+[docs/ml-deployment-design.md](docs/ml-deployment-design.md).
+
+Export a versioned, integrity-hashed offline snapshot of the local feedback data:
+
+```bash
+creatorcut-export-feedback
+```
+
+The ignored JSONL snapshot includes impressions, explicit choices, custom clips, timestamp deltas,
+model lineage, semantic representations, and the latest audience outcome without exposing media
+paths.
 
 Validate the source manifest and annotations:
 

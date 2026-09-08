@@ -84,6 +84,10 @@ For transparency, recurring unigrams and two-word phrases with positive outcome 
 shown in the interface. These terms explain the observed history; candidate scoring itself uses the
 full semantic embedding rather than exact keyword matching.
 
+The interface also summarizes negative term associations and the strongest structured feature
+directions. The summary is assembled deterministically from the fitted creator profile and always
+describes the patterns as within-channel associations rather than causal effects.
+
 The performance layer requires at least five distinct Shorts, at least 50 views or engaged views
 per Short, at least one useful outcome metric, and non-constant outcomes. Both components shrink
 toward zero with small samples, and their combined contribution is capped at ±0.25 rating points.
@@ -113,6 +117,9 @@ embedding before saving the outcome so legacy recommendations can participate in
 - The frozen global model remains unchanged by product analytics.
 - Outcome normalization happens only within one creator.
 - Every recommendation logs a `presented` event so exposure is distinguishable from rejection.
+- Presentation events retain rank, model version, global score, final score, and every adaptive
+  adjustment. Creator-defined alternatives use `origin=creator` and receive their own frozen
+  representation and lineage.
 - Editorial choices and audience outcomes remain separate adjustment layers.
 - Only the newest report for a clip contributes, preventing repeated imports from duplicating it.
 - Global model promotion still requires versioned training data and evaluation on unseen source

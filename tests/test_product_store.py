@@ -72,6 +72,8 @@ def test_store_persists_upload_clips_and_presentations(tmp_path):
         "semantic_performance_active": False,
         "semantic_performance_example_count": 0,
         "positive_semantic_trends": [],
+        "negative_semantic_trends": [],
+        "performance_insight_summary": None,
     }
     assert [item["id"] for item in store.list_videos(creator["id"])] == [video["id"]]
     assert "semantic_embedding_json" not in saved["clips"][0]
@@ -87,6 +89,55 @@ def test_store_can_backfill_a_legacy_clip_embedding(tmp_path):
         0.6,
         0.8,
     ]
+
+
+def test_store_records_creator_authored_clip_as_explicit_preference(tmp_path):
+    store, creator, video, _ = populated_store(tmp_path)
+    clip_id = store.save_custom_clip(
+        video["id"],
+        {
+            "start_seconds": 145.0,
+            "end_seconds": 175.0,
+            "duration_seconds": 30.0,
+            "transcript_text": "A creator found this pricing story themselves.",
+            "semantic_embedding": [0.0, 1.0],
+            "global_score": 3.8,
+            "personalized_score": 3.8,
+            "predicted_targets": {
+                "hook": 4.0,
+                "completeness": 4.0,
+                "payoff": 4.0,
+                "clarity": 4.0,
+            },
+            "explanation": "Creator-defined interval.",
+        },
+    )
+
+    saved = store.get_video(video["id"])
+
+    assert saved["clips"][-1]["id"] == clip_id
+    assert saved["clips"][-1]["origin"] == "creator"
+    assert store.creator_summary(creator["id"])["decision_count"] == 1
+
+
+def test_completed_review_records_unselected_options_once(tmp_path):
+    store, creator, video, clips = populated_store(tmp_path)
+    store.record_editorial_event(
+        clips[0]["id"], "download_original", clips[0]["start_seconds"], clips[0]["end_seconds"]
+    )
+
+    assert store.complete_recommendation_review(video["id"]) == 2
+    assert store.complete_recommendation_review(video["id"]) == 0
+    summary = store.creator_summary(creator["id"])
+    assert summary["decision_count"] == 3
+    assert summary["personalization_active"] is True
+
+
+def test_completed_review_requires_a_positive_selection(tmp_path):
+    store, _, video, _ = populated_store(tmp_path)
+
+    with pytest.raises(ValueError, match="Choose or add at least one"):
+        store.complete_recommendation_review(video["id"])
 
 
 def test_editorial_feedback_activates_bounded_personalization(tmp_path):
@@ -348,9 +399,14 @@ def test_performance_layer_learns_only_after_five_comparable_shorts(tmp_path):
     )
     summary = store.creator_summary(creator["id"])
     assert summary["semantic_performance_active"] is True
+    assert summary["performance_insight_summary"].startswith("Across 5 eligible Shorts")
     assert any(
         trend["term"] == "pricing strategy"
         for trend in summary["positive_semantic_trends"]
+    )
+    assert any(
+        trend["term"] == "general introduction"
+        for trend in summary["negative_semantic_trends"]
     )
 
 

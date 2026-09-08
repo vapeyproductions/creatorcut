@@ -10,7 +10,11 @@ CreatorCut's local product surface runs one deliberately narrow workflow:
 4. A diversity pass returns three recommendations from different moments in the source.
 5. The creator downloads the original interval, changes its boundaries and downloads the edit, or
    explicitly rejects it.
-6. If the clip is published, the creator can enter metrics manually or import a YouTube Studio
+6. The creator can define a completely different interval if the ranked set missed the desired
+   moment, then preview, edit, and export it through the same workflow.
+7. After making a selection, the creator can close the review so untouched recommendations are
+   recorded as explicitly unselected rather than silently inferred from missing clicks.
+8. If the clip is published, the creator can enter metrics manually or import a YouTube Studio
    ZIP/CSV report.
 
 The current build persists structured metadata in SQLite and video bytes on the local filesystem.
@@ -41,6 +45,11 @@ retain the exact interval and decision type:
 - `download_original` is positive editorial feedback on the proposed interval.
 - `download_edited` is positive feedback on the underlying moment plus an observed boundary
   correction. The start and end deltas are saved as separate learning targets.
+- `custom_created` is strong positive evidence for a creator-authored moment the ranker missed. Its
+  transcript, frozen embedding, model scores, exact interval, and later outcomes use the same data
+  contract as model recommendations.
+- `review_closed_unselected` is a weak negative signal created only after the creator explicitly
+  finishes a review containing a positive selection. An ordinary missing click remains unlabeled.
 - `reject` is explicit negative editorial feedback.
 
 These are implicit preference signals, not interchangeable replacements for the carefully scored
@@ -65,6 +74,11 @@ the same frozen transcript embeddings as the global ranker to transfer the outco
 published clips to a new candidate. Repeated words and two-word phrases from stronger clips are
 displayed as trend evidence, but exact word overlap is not required for scoring. The two components
 are shrinkage-weighted and jointly capped at 0.25 rating points.
+
+After performance adaptation activates, the product also emits a deterministic audience-pattern
+summary. It names the strongest structured associations and recurring terms in stronger and weaker
+clips, states the number of eligible Shorts, and explicitly labels the evidence as correlational.
+No generative model invents the summary.
 
 An optional source-video analytics import is handled separately. If a timestamped long-form
 audience-retention curve has at least ten points and 100 source views, it can add a within-video

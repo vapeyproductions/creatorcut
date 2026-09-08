@@ -96,7 +96,38 @@
           </form>
           <p id="source-analytics-message" class="clip-message" role="status"></p>
         </details>
+        <details class="custom-clip-details">
+          <summary>Add your own clip</summary>
+          <p class="small-print">
+            If the recommendations miss a moment, define it here. CreatorCut saves the interval,
+            transcript, semantic embedding, model scores, and subsequent edits or performance as
+            explicit creator preference evidence.
+          </p>
+          <video id="custom-source-video" preload="metadata" controls playsinline></video>
+          <form id="custom-clip-form">
+            <div class="time-fields">
+              <label>Start <input name="start_seconds" type="number" min="0" step="0.1" required /></label>
+              <label>End <input name="end_seconds" type="number" min="0" step="0.1" required /></label>
+            </div>
+            <div class="custom-time-buttons">
+              <button id="use-current-start" class="plain-button" type="button">USE CURRENT TIME AS START</button>
+              <button id="use-current-end" class="plain-button" type="button">USE CURRENT TIME AS END</button>
+              <button id="preview-custom" class="plain-button" type="button">PREVIEW INTERVAL</button>
+            </div>
+            <button type="submit">ADD CUSTOM CLIP</button>
+          </form>
+          <p id="custom-clip-message" class="clip-message" role="status"></p>
+        </details>
         <div id="clips"></div>
+        <section class="review-complete">
+          <p>
+            Finished choosing? Save the remaining model recommendations as explicitly unselected.
+            This is weaker evidence than pressing “don't use this” and is never inferred merely
+            because a clip was not clicked.
+          </p>
+          <button id="finish-review" type="button">FINISH REVIEW</button>
+          <p id="finish-review-message" class="clip-message" role="status"></p>
+        </section>
       </section>
     </main>
 

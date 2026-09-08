@@ -267,6 +267,7 @@ progress::-moz-progress-bar {
 }
 
 .semantic-trends h3,
+.semantic-trends h4,
 .semantic-trends p,
 .semantic-trends ul {
   margin: 0;
@@ -278,6 +279,12 @@ progress::-moz-progress-bar {
 .semantic-trends h3 {
   margin-bottom: 5px;
   font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+.semantic-trends h4 {
+  margin: 10px 0 0;
+  font-size: 10px;
   letter-spacing: 0.06em;
 }
 
@@ -298,6 +305,57 @@ progress::-moz-progress-bar {
   margin: -12px 0 32px;
   padding: 12px 0 16px;
   border-bottom: 1px dotted #111;
+}
+
+.custom-clip-details {
+  margin: -18px 0 32px;
+  padding: 12px 0 22px;
+  border-bottom: 1px dotted #111;
+}
+
+.custom-clip-details summary {
+  cursor: pointer;
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+  font-weight: bold;
+  text-transform: uppercase;
+}
+
+#custom-source-video {
+  display: block;
+  width: min(100%, 720px);
+  margin: 14px 0;
+  border: 1px solid #111;
+  background: #000;
+}
+
+#custom-clip-form {
+  max-width: 720px;
+}
+
+.custom-time-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 10px 0 16px;
+}
+
+.clip-result.creator-clip {
+  border-top-style: double;
+  border-top-width: 6px;
+}
+
+.review-complete {
+  margin-top: 8px;
+  padding: 18px 0;
+  border-top: 3px solid #111;
+}
+
+.review-complete p {
+  max-width: 680px;
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .source-analytics-details summary,

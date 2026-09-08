@@ -18,6 +18,8 @@ from creatorcut.analytics import performance_values
 EDITORIAL_EVENT_WEIGHTS = {
     "download_original": 1.0,
     "download_edited": 1.0,
+    "custom_created": 1.0,
+    "review_closed_unselected": -0.35,
     "reject": -1.0,
 }
 PERSONALIZATION_PRIOR_STRENGTH = 8.0
@@ -228,6 +230,7 @@ class ProductStore:
             "clips": {
                 "global_rank": "INTEGER",
                 "ranking_model_version": "TEXT",
+                "origin": "TEXT NOT NULL DEFAULT 'model'",
                 "editorial_adjustment": "REAL NOT NULL DEFAULT 0",
                 "performance_adjustment": "REAL NOT NULL DEFAULT 0",
                 "semantic_performance_adjustment": "REAL NOT NULL DEFAULT 0",
@@ -328,11 +331,11 @@ class ProductStore:
                         id, video_id, rank, start_seconds, end_seconds, duration_seconds,
                         transcript_text, global_score, personalized_score,
                         predicted_targets_json, explanation, global_rank,
-                        ranking_model_version,
+                        ranking_model_version, origin,
                         editorial_adjustment, performance_adjustment,
                         semantic_performance_adjustment, source_retention_adjustment,
                         semantic_embedding_json, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         clip["id"],
@@ -348,6 +351,7 @@ class ProductStore:
                         clip["explanation"],
                         clip.get("global_rank"),
                         clip.get("ranking_model_version"),
+                        clip.get("origin", "model"),
                         clip.get("editorial_adjustment", 0.0),
                         clip.get("performance_adjustment", 0.0),
                         clip.get("semantic_performance_adjustment", 0.0),
@@ -371,10 +375,168 @@ class ProductStore:
                         clip["id"],
                         clip["start_seconds"],
                         clip["end_seconds"],
-                        json.dumps({"rank": clip["rank"]}),
+                        json.dumps(
+                            {
+                                "rank": clip["rank"],
+                                "global_rank": clip.get("global_rank"),
+                                "ranking_model_version": clip.get(
+                                    "ranking_model_version"
+                                ),
+                                "global_score": clip["global_score"],
+                                "personalized_score": clip["personalized_score"],
+                                "editorial_adjustment": clip.get(
+                                    "editorial_adjustment", 0.0
+                                ),
+                                "performance_adjustment": clip.get(
+                                    "performance_adjustment", 0.0
+                                ),
+                                "semantic_performance_adjustment": clip.get(
+                                    "semantic_performance_adjustment", 0.0
+                                ),
+                                "source_retention_adjustment": clip.get(
+                                    "source_retention_adjustment", 0.0
+                                ),
+                            },
+                            sort_keys=True,
+                        ),
                         utc_now(),
                     ),
                 )
+
+    def save_custom_clip(self, video_id: str, clip: dict[str, Any]) -> str:
+        """Persist a creator-authored interval as preference evidence, not a model impression."""
+        video = self.get_video(video_id)
+        clip_id = f"{video_id}_custom_{uuid.uuid4().hex}"
+        with self._write_lock, self._connect() as connection:
+            next_rank = connection.execute(
+                "SELECT COALESCE(MAX(rank), 0) + 1 FROM clips WHERE video_id = ?",
+                (video_id,),
+            ).fetchone()[0]
+            connection.execute(
+                """
+                INSERT INTO clips(
+                    id, video_id, rank, start_seconds, end_seconds, duration_seconds,
+                    transcript_text, global_score, personalized_score,
+                    predicted_targets_json, explanation, global_rank,
+                    ranking_model_version, origin, editorial_adjustment,
+                    performance_adjustment, semantic_performance_adjustment,
+                    source_retention_adjustment, semantic_embedding_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    clip_id,
+                    video_id,
+                    next_rank,
+                    clip["start_seconds"],
+                    clip["end_seconds"],
+                    clip["duration_seconds"],
+                    clip["transcript_text"],
+                    clip["global_score"],
+                    clip["personalized_score"],
+                    json.dumps(clip["predicted_targets"], sort_keys=True),
+                    clip["explanation"],
+                    None,
+                    clip.get("ranking_model_version"),
+                    "creator",
+                    clip.get("editorial_adjustment", 0.0),
+                    clip.get("performance_adjustment", 0.0),
+                    clip.get("semantic_performance_adjustment", 0.0),
+                    clip.get("source_retention_adjustment", 0.0),
+                    json.dumps(clip["semantic_embedding"]),
+                    utc_now(),
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO feedback_events(
+                    creator_id, video_id, clip_id, event_type, start_seconds,
+                    end_seconds, payload_json, created_at
+                ) VALUES (?, ?, ?, 'custom_created', ?, ?, ?, ?)
+                """,
+                (
+                    video["creator_id"],
+                    video_id,
+                    clip_id,
+                    clip["start_seconds"],
+                    clip["end_seconds"],
+                    json.dumps(
+                        {
+                            "origin": "creator",
+                            "ranking_model_version": clip.get(
+                                "ranking_model_version"
+                            ),
+                            "global_score": clip["global_score"],
+                            "personalized_score": clip["personalized_score"],
+                        },
+                        sort_keys=True,
+                    ),
+                    utc_now(),
+                ),
+            )
+        return clip_id
+
+    def complete_recommendation_review(self, video_id: str) -> int:
+        """Record explicitly closed, unselected model options as weak negative evidence."""
+        video = self.get_video(video_id)
+        with self._write_lock, self._connect() as connection:
+            positive = connection.execute(
+                """
+                SELECT COUNT(*) FROM feedback_events
+                WHERE video_id = ?
+                  AND event_type IN (
+                      'download_original', 'download_edited', 'custom_created'
+                  )
+                """,
+                (video_id,),
+            ).fetchone()[0]
+            if positive == 0:
+                raise ValueError(
+                    "Choose or add at least one clip before closing the recommendation review"
+                )
+            unresolved = connection.execute(
+                """
+                SELECT clips.* FROM clips
+                WHERE clips.video_id = ? AND clips.origin = 'model'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM feedback_events
+                      WHERE feedback_events.clip_id = clips.id
+                        AND feedback_events.event_type IN (
+                            'download_original', 'download_edited', 'reject',
+                            'review_closed_unselected'
+                        )
+                  )
+                ORDER BY clips.rank
+                """,
+                (video_id,),
+            ).fetchall()
+            for clip in unresolved:
+                connection.execute(
+                    """
+                    INSERT INTO feedback_events(
+                        creator_id, video_id, clip_id, event_type, start_seconds,
+                        end_seconds, payload_json, created_at
+                    ) VALUES (?, ?, ?, 'review_closed_unselected', ?, ?, ?, ?)
+                    """,
+                    (
+                        video["creator_id"],
+                        video_id,
+                        clip["id"],
+                        clip["start_seconds"],
+                        clip["end_seconds"],
+                        json.dumps(
+                            {
+                                "rank": clip["rank"],
+                                "ranking_model_version": clip[
+                                    "ranking_model_version"
+                                ],
+                                "reason": "review_closed_after_positive_selection",
+                            },
+                            sort_keys=True,
+                        ),
+                        utc_now(),
+                    ),
+                )
+        return len(unresolved)
 
     def get_video(self, video_id: str) -> dict[str, Any]:
         """Return one upload and its ranked clips without exposing its local media path."""
@@ -765,6 +927,79 @@ class ProductStore:
             for term, score, count in ranked[:6]
         ]
 
+    @classmethod
+    def _negative_semantic_trends(
+        cls, examples: list[dict[str, Any]], targets: dict[str, float]
+    ) -> list[dict[str, Any]]:
+        scores: dict[str, float] = {}
+        support: dict[str, int] = {}
+        for row in examples:
+            outcome = targets.get(row["clip_id"])
+            if outcome is None:
+                continue
+            for term in cls._semantic_terms(str(row.get("transcript_text", ""))):
+                scores[term] = scores.get(term, 0.0) + outcome
+                support[term] = support.get(term, 0) + 1
+        ranked = sorted(
+            (
+                (term, score, support[term])
+                for term, score in scores.items()
+                if support[term] >= 2 and score < 0
+            ),
+            key=lambda item: (item[1], -item[2], item[0]),
+        )
+        return [
+            {"term": term, "support": count, "association": round(score, 3)}
+            for term, score, count in ranked[:6]
+        ]
+
+    @staticmethod
+    def _performance_insight_summary(
+        example_count: int,
+        weights: list[float],
+        positive_terms: list[dict[str, Any]],
+        negative_terms: list[dict[str, Any]],
+    ) -> str | None:
+        if example_count < MINIMUM_PERFORMANCE_EXAMPLES:
+            return None
+        feature_phrases = {
+            "hook": ("higher predicted hook", "lower predicted hook"),
+            "completeness": (
+                "higher predicted completeness",
+                "lower predicted completeness",
+            ),
+            "payoff": ("higher predicted payoff", "lower predicted payoff"),
+            "clarity": ("higher predicted clarity", "lower predicted clarity"),
+            "duration": ("longer clips", "shorter clips"),
+        }
+        ranked_features = sorted(
+            zip(PREFERENCE_FEATURE_NAMES, weights, strict=True),
+            key=lambda item: (-abs(item[1]), item[0]),
+        )
+        associated_features = [
+            feature_phrases[field][0 if weight > 0 else 1]
+            for field, weight in ranked_features
+            if abs(weight) > 1e-6
+        ][:2]
+        stronger = list(associated_features)
+        if positive_terms:
+            stronger.append(
+                "themes such as " + ", ".join(item["term"] for item in positive_terms[:3])
+            )
+        sentences = [
+            f"Across {example_count} eligible Shorts, stronger outcomes are currently associated "
+            + ("with " + "; ".join(stronger) if stronger else "with no stable feature yet")
+            + "."
+        ]
+        if negative_terms:
+            sentences.append(
+                "Lower-performing clips more often contain themes such as "
+                + ", ".join(item["term"] for item in negative_terms[:3])
+                + "."
+            )
+        sentences.append("These are within-channel associations, not causal claims.")
+        return " ".join(sentences)
+
     @staticmethod
     def _semantic_outcome_adjustment(
         candidate_embedding: list[float] | None,
@@ -880,6 +1115,12 @@ class ProductStore:
         semantic_active = semantic_example_count >= MINIMUM_PERFORMANCE_EXAMPLES
         if not semantic_active:
             semantic_examples = []
+        positive_semantic_trends = (
+            self._positive_semantic_trends(eligible, targets) if semantic_active else []
+        )
+        negative_semantic_trends = (
+            self._negative_semantic_trends(eligible, targets) if semantic_active else []
+        )
         return weights, semantic_examples, {
             "active": active,
             "eligible_clip_count": len(eligible),
@@ -889,11 +1130,14 @@ class ProductStore:
             "feature_weights": dict(zip(PREFERENCE_FEATURE_NAMES, weights, strict=True)),
             "semantic_active": semantic_active,
             "semantic_example_count": semantic_example_count,
-            "positive_semantic_trends": self._positive_semantic_trends(
-                eligible, targets
-            )
-            if semantic_active
-            else [],
+            "positive_semantic_trends": positive_semantic_trends,
+            "negative_semantic_trends": negative_semantic_trends,
+            "insight_summary": self._performance_insight_summary(
+                len(eligible),
+                weights,
+                positive_semantic_trends,
+                negative_semantic_trends,
+            ),
         }
 
     def personalize_candidates(
@@ -909,7 +1153,8 @@ class ProductStore:
                 FROM feedback_events JOIN clips ON clips.id = feedback_events.clip_id
                 WHERE feedback_events.creator_id = ?
                   AND feedback_events.event_type IN (
-                      'download_original', 'download_edited', 'reject'
+                      'download_original', 'download_edited', 'custom_created',
+                      'review_closed_unselected', 'reject'
                   )
                 ORDER BY feedback_events.id
                 """,
@@ -1085,7 +1330,10 @@ class ProductStore:
                 """
                 SELECT COUNT(DISTINCT clip_id) FROM feedback_events
                 WHERE creator_id = ?
-                  AND event_type IN ('download_original', 'download_edited', 'reject')
+                  AND event_type IN (
+                      'download_original', 'download_edited', 'custom_created',
+                      'review_closed_unselected', 'reject'
+                  )
                 """,
                 (creator_id,),
             ).fetchone()[0]
@@ -1107,7 +1355,118 @@ class ProductStore:
             "semantic_performance_active": performance["semantic_active"],
             "semantic_performance_example_count": performance["semantic_example_count"],
             "positive_semantic_trends": performance["positive_semantic_trends"],
+            "negative_semantic_trends": performance["negative_semantic_trends"],
+            "performance_insight_summary": performance["insight_summary"],
         }
+
+    def feedback_training_records(
+        self, creator_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Build an auditable offline snapshot from the exact records used while serving."""
+        with self._connect() as connection:
+            if creator_id is None:
+                clips = connection.execute(
+                    """
+                    SELECT clips.*, videos.creator_id
+                    FROM clips JOIN videos ON videos.id = clips.video_id
+                    ORDER BY videos.created_at, clips.video_id, clips.rank
+                    """
+                ).fetchall()
+            else:
+                clips = connection.execute(
+                    """
+                    SELECT clips.*, videos.creator_id
+                    FROM clips JOIN videos ON videos.id = clips.video_id
+                    WHERE videos.creator_id = ?
+                    ORDER BY videos.created_at, clips.video_id, clips.rank
+                    """,
+                    (creator_id,),
+                ).fetchall()
+            records = []
+            for clip_row in clips:
+                clip = dict(clip_row)
+                events = [
+                    dict(row)
+                    for row in connection.execute(
+                        """
+                        SELECT event_type, start_seconds, end_seconds, payload_json, created_at
+                        FROM feedback_events WHERE clip_id = ? ORDER BY id
+                        """,
+                        (clip["id"],),
+                    ).fetchall()
+                ]
+                for event in events:
+                    event["payload"] = json.loads(event.pop("payload_json"))
+                labeled = [
+                    event
+                    for event in events
+                    if event["event_type"] in EDITORIAL_EVENT_WEIGHTS
+                ]
+                latest_label = labeled[-1] if labeled else None
+                performance_row = connection.execute(
+                    """
+                    SELECT * FROM performance_reports
+                    WHERE clip_id = ? ORDER BY id DESC LIMIT 1
+                    """,
+                    (clip["id"],),
+                ).fetchone()
+                performance = dict(performance_row) if performance_row else None
+                if performance:
+                    for field in ("id", "creator_id", "clip_id"):
+                        performance.pop(field, None)
+                final_start = (
+                    latest_label["start_seconds"]
+                    if latest_label and latest_label["start_seconds"] is not None
+                    else clip["start_seconds"]
+                )
+                final_end = (
+                    latest_label["end_seconds"]
+                    if latest_label and latest_label["end_seconds"] is not None
+                    else clip["end_seconds"]
+                )
+                records.append(
+                    {
+                        "creator_id": clip["creator_id"],
+                        "video_id": clip["video_id"],
+                        "clip_id": clip["id"],
+                        "origin": clip["origin"],
+                        "display_rank": clip["rank"],
+                        "global_rank": clip["global_rank"],
+                        "proposed_start_seconds": clip["start_seconds"],
+                        "proposed_end_seconds": clip["end_seconds"],
+                        "final_start_seconds": final_start,
+                        "final_end_seconds": final_end,
+                        "start_delta_seconds": final_start - clip["start_seconds"],
+                        "end_delta_seconds": final_end - clip["end_seconds"],
+                        "transcript_text": clip["transcript_text"],
+                        "semantic_embedding": self._semantic_vector(
+                            clip["semantic_embedding_json"]
+                        ),
+                        "ranking_model_version": clip["ranking_model_version"],
+                        "predicted_targets": json.loads(clip["predicted_targets_json"]),
+                        "global_score": clip["global_score"],
+                        "personalized_score": clip["personalized_score"],
+                        "adjustments": {
+                            "editorial": clip["editorial_adjustment"],
+                            "performance": clip["performance_adjustment"],
+                            "semantic_performance": clip[
+                                "semantic_performance_adjustment"
+                            ],
+                            "source_retention": clip[
+                                "source_retention_adjustment"
+                            ],
+                        },
+                        "editorial_label": latest_label["event_type"]
+                        if latest_label
+                        else None,
+                        "editorial_weight": EDITORIAL_EVENT_WEIGHTS.get(
+                            latest_label["event_type"] if latest_label else ""
+                        ),
+                        "events": events,
+                        "latest_performance": performance,
+                    }
+                )
+        return records
 
     @staticmethod
     def _public_clip(clip: dict[str, Any]) -> dict[str, Any]:

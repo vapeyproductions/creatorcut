@@ -199,6 +199,18 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                     video_id = unquote(path[len("/api/videos/") : -len("/analytics")]).strip("/")
                     self._handle_analytics_import("source_video", video_id)
                     return
+                if path.startswith("/api/videos/") and path.endswith("/custom-clips"):
+                    video_id = unquote(
+                        path[len("/api/videos/") : -len("/custom-clips")]
+                    ).strip("/")
+                    self._handle_custom_clip(video_id)
+                    return
+                if path.startswith("/api/videos/") and path.endswith("/review-complete"):
+                    video_id = unquote(
+                        path[len("/api/videos/") : -len("/review-complete")]
+                    ).strip("/")
+                    self._handle_review_complete(video_id)
+                    return
                 self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
             except KeyError:
                 self._send_json({"error": "Record not found"}, HTTPStatus.NOT_FOUND)
@@ -302,6 +314,36 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
             application.processor.ensure_clip_semantic_embedding(clip_id)
             application.store.save_performance_report(clip_id, report)
             self._send_json({"saved": True}, HTTPStatus.CREATED)
+
+        def _handle_custom_clip(self, video_id: str) -> None:
+            value = self._read_json()
+            clip_id = application.processor.create_custom_clip(
+                video_id,
+                value.get("start_seconds"),
+                value.get("end_seconds"),
+            )
+            video = application.store.get_video(video_id)
+            video["creator_summary"] = application.store.creator_summary(
+                video["creator_id"]
+            )
+            self._send_json(
+                {"saved": True, "clip_id": clip_id, "video": video},
+                HTTPStatus.CREATED,
+            )
+
+        def _handle_review_complete(self, video_id: str) -> None:
+            self._read_json()
+            unselected_count = application.store.complete_recommendation_review(
+                video_id
+            )
+            video = application.store.get_video(video_id)
+            video["creator_summary"] = application.store.creator_summary(
+                video["creator_id"]
+            )
+            self._send_json(
+                {"saved": True, "unselected_count": unselected_count, "video": video},
+                HTTPStatus.CREATED,
+            )
 
         def _handle_analytics_import(self, report_role: str, target_id: str) -> None:
             content_length = int(self.headers.get("Content-Length", "0"))

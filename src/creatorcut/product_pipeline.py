@@ -159,6 +159,26 @@ def validate_export_interval(
     return round(start, 3), round(end, 3)
 
 
+def validate_custom_interval(
+    start_seconds: float,
+    end_seconds: float,
+    media_duration_seconds: float,
+) -> tuple[float, float]:
+    """Validate a creator-authored clip anywhere inside the source video."""
+    try:
+        start = float(start_seconds)
+        end = float(end_seconds)
+    except (TypeError, ValueError) as error:
+        raise ValueError("Custom clip timestamps must be numbers") from error
+    if not all(math.isfinite(value) for value in (start, end, media_duration_seconds)):
+        raise ValueError("Custom clip timestamps must be finite numbers")
+    if start < 0 or end > media_duration_seconds or end <= start:
+        raise ValueError("Custom clip timestamps fall outside the uploaded video")
+    if not MINIMUM_EXPORT_DURATION_SECONDS <= end - start <= MAXIMUM_EXPORT_DURATION_SECONDS:
+        raise ValueError("Custom clips must be between 5 and 90 seconds")
+    return round(start, 3), round(end, 3)
+
+
 def export_dimensions(width: int, height: int) -> tuple[int, int]:
     """Fit video inside a 1920px box and retain encoder-safe even dimensions."""
     scale = min(1.0, MAXIMUM_EXPORT_EDGE_PIXELS / max(width, height))
@@ -201,6 +221,18 @@ def build_caption_cues(
             }
         )
     return cues
+
+
+def transcript_text_for_interval(
+    transcript: dict[str, Any], start: float, end: float
+) -> str:
+    """Return exact word-timestamped transcript text for an arbitrary creator interval."""
+    return " ".join(
+        str(word.get("word", "")).strip()
+        for segment in transcript.get("segments", [])
+        for word in segment.get("words", [])
+        if float(word["end"]) > start and float(word["start"]) < end
+    ).strip()
 
 
 def _active_caption(cues: list[dict[str, Any]], frame_time: float) -> str | None:
@@ -555,6 +587,84 @@ class ProductProcessor:
             self.store.update_video(video_id, "ready")
         except Exception as error:  # background failures must become visible job state
             self.store.update_video(video_id, "failed", error_message=str(error)[:500])
+
+    def create_custom_clip(
+        self, video_id: str, start_seconds: float, end_seconds: float
+    ) -> str:
+        """Score and persist a creator-authored interval as explicit preference evidence."""
+        video = self.store.get_video(video_id)
+        if video["status"] != "ready" or not video.get("duration_seconds"):
+            raise ValueError("The source video must finish processing first")
+        start, end = validate_custom_interval(
+            start_seconds, end_seconds, float(video["duration_seconds"])
+        )
+        transcript_path = self.work_dir / video_id / "transcript.json"
+        transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
+        text = transcript_text_for_interval(transcript, start, end)
+        if not text:
+            raise ValueError("The custom interval does not contain transcribed speech")
+
+        frozen_model = json.loads(self.frozen_model_path.read_text(encoding="utf-8"))
+        semantic_metadata = frozen_model["semantic_feature_metadata"]
+        tokenizer_path, encoder_path = _download_model_files(
+            semantic_metadata["model_id"],
+            semantic_metadata["revision"],
+            semantic_metadata["onnx_filename"],
+            self.semantic_cache,
+        )
+        candidate_id = f"{video_id}_custom_candidate"
+        queue = [
+            {
+                "annotation_id": f"{candidate_id}_production",
+                "candidate_id": candidate_id,
+                "video_id": video_id,
+                "start_seconds": start,
+                "end_seconds": end,
+                "duration_seconds": end - start,
+                "transcript_text": text,
+                "labels": {},
+            }
+        ]
+        embeddings = encode_texts_onnx(
+            [text],
+            tokenizer_path,
+            encoder_path,
+            batch_size=1,
+            maximum_length=semantic_metadata.get("maximum_length", DEFAULT_MAX_LENGTH),
+        )
+        embedding_artifact = build_embedding_artifact(
+            queue,
+            embeddings,
+            model_id=semantic_metadata["model_id"],
+            revision=semantic_metadata["revision"],
+            onnx_filename=semantic_metadata["onnx_filename"],
+            maximum_length=semantic_metadata.get("maximum_length", DEFAULT_MAX_LENGTH),
+        )
+        prediction = score_frozen_model(queue, embedding_artifact, frozen_model)["records"][0]
+        candidate = {
+            "candidate_id": candidate_id,
+            "start_seconds": start,
+            "end_seconds": end,
+            "duration_seconds": end - start,
+            "transcript_text": text,
+            "semantic_embedding": embeddings[0].astype(float).tolist(),
+            "global_score": prediction["predicted_quality_score"],
+            "predicted_targets": prediction["predicted_targets"],
+        }
+        personalized, _ = self.store.personalize_candidates(
+            video["creator_id"], [candidate]
+        )
+        adjusted, _ = self.store.apply_source_retention_signal(video_id, personalized)
+        clip = {
+            **adjusted[0],
+            "ranking_model_version": frozen_model.get(
+                "freeze_schema", "unversioned_frozen_model"
+            ),
+            "explanation": (
+                "Creator-defined interval. Scored for evidence, not selected by the model."
+            ),
+        }
+        return self.store.save_custom_clip(video_id, clip)
 
     def export_clip(
         self,

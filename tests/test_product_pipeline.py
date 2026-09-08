@@ -1,17 +1,23 @@
+import json
 from fractions import Fraction
 
 import av
 import numpy as np
 import pytest
 
+import creatorcut.product_pipeline as product_pipeline
 from creatorcut.product_pipeline import (
+    ProductProcessor,
     build_caption_cues,
     export_dimensions,
     prefilter_candidates,
     select_diverse_top_clips,
     transcode_clip,
+    transcript_text_for_interval,
+    validate_custom_interval,
     validate_export_interval,
 )
+from creatorcut.product_store import ProductStore
 
 
 def candidate(candidate_id, start, end, score=3.0):
@@ -63,6 +69,98 @@ def test_validate_export_interval_accepts_a_small_edit():
     assert validate_export_interval(clip, 31.2, 67.8, 120.0) == (31.2, 67.8)
 
 
+def test_validate_custom_interval_accepts_any_safe_source_interval():
+    assert validate_custom_interval(91.2, 126.8, 180.0) == (91.2, 126.8)
+
+    with pytest.raises(ValueError, match="between 5 and 90"):
+        validate_custom_interval(10.0, 13.0, 180.0)
+
+
+def test_processor_scores_and_saves_creator_authored_interval(tmp_path, monkeypatch):
+    store = ProductStore(tmp_path / "product.sqlite")
+    creator = store.ensure_creator("Example", "creator_example")
+    source = tmp_path / "source.mp4"
+    source.touch()
+    video = store.create_video(creator["id"], source.name, source)
+    store.update_video(video["id"], "ready", duration_seconds=60.0)
+    work_dir = tmp_path / "work"
+    transcript_dir = work_dir / video["id"]
+    transcript_dir.mkdir(parents=True)
+    (transcript_dir / "transcript.json").write_text(
+        json.dumps(
+            {
+                "segments": [
+                    {
+                        "words": [
+                            {"start": 10.0, "end": 10.5, "word": "Custom"},
+                            {"start": 10.5, "end": 11.0, "word": "story"},
+                            {"start": 11.0, "end": 11.5, "word": "works."},
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    frozen_model_path = tmp_path / "model.json"
+    frozen_model_path.write_text(
+        json.dumps(
+            {
+                "freeze_schema": "creatorcut_ranker_freeze_v1",
+                "semantic_feature_metadata": {
+                    "model_id": "example",
+                    "revision": "fixed",
+                    "onnx_filename": "model.onnx",
+                    "maximum_length": 256,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        product_pipeline,
+        "_download_model_files",
+        lambda *args, **kwargs: (tmp_path / "tokenizer.json", tmp_path / "model.onnx"),
+    )
+    monkeypatch.setattr(
+        product_pipeline,
+        "encode_texts_onnx",
+        lambda *args, **kwargs: np.asarray([[0.6, 0.8]]),
+    )
+    monkeypatch.setattr(product_pipeline, "build_embedding_artifact", lambda *a, **k: {})
+    monkeypatch.setattr(
+        product_pipeline,
+        "score_frozen_model",
+        lambda *args, **kwargs: {
+            "records": [
+                {
+                    "predicted_quality_score": 4.1,
+                    "predicted_targets": {
+                        "hook": 4.0,
+                        "completeness": 4.2,
+                        "payoff": 4.1,
+                        "clarity": 4.1,
+                    },
+                }
+            ]
+        },
+    )
+    processor = ProductProcessor(
+        store,
+        work_dir,
+        frozen_model_path,
+        tmp_path / "model-cache",
+        tmp_path / "semantic-cache",
+    )
+
+    clip_id = processor.create_custom_clip(video["id"], 9.5, 15.0)
+    clip = store.get_clip(clip_id)
+
+    assert clip["origin"] == "creator"
+    assert clip["transcript_text"] == "Custom story works."
+    assert clip["global_score"] == pytest.approx(4.1)
+
+
 def test_build_caption_cues_uses_word_timestamps_and_clip_bounds():
     transcript = {
         "segments": [
@@ -84,6 +182,9 @@ def test_build_caption_cues_uses_word_timestamps_and_clip_bounds():
         {"start": 10.0, "end": 11.08, "text": "Before this works."},
         {"start": 11.2, "end": 11.8, "text": "Next idea."},
     ]
+    assert transcript_text_for_interval(transcript, 10.0, 11.8) == (
+        "Before this works. Next idea."
+    )
 
 
 def test_transcode_clip_creates_vertical_captioned_mp4(tmp_path):
