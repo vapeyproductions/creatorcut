@@ -206,6 +206,48 @@ hit rate, and 0.828 mean top-selection regret. Its best candidate appears in the
 calibration. The full preregistered and exploratory analysis is reported in
 [docs/external-holdout-v1-results.md](docs/external-holdout-v1-results.md).
 
+After that frozen result was recorded, the reviewed cohort was promoted into v2 development data.
+The v2 target separates a moment's attainable content quality from boundary quality: when a clip
+has a separately scored edit, the moment ranker uses that edited-version score, while start/end
+selection is modeled independently. Build the 192-clip, 32-video corpus and its public-safe report
+with:
+
+```bash
+creatorcut-build-v2-development \
+  --original-records data/processed/training_clips.jsonl \
+  --completed-queue data/processed/holdout_v1/annotation_queue.jsonl \
+  --completed-reviews data/processed/holdout_v1/annotation_reviews.jsonl \
+  --original-embeddings data/processed/semantic_embeddings.json \
+  --completed-embeddings data/processed/holdout_v1/semantic_embeddings.json \
+  --output-records data/processed/v2/training_clips.jsonl \
+  --output-embeddings data/processed/v2/semantic_embeddings.json \
+  --output-summary data/processed/v2/development_summary.json
+```
+
+Leave-one-video-out evaluation gives a fixed equal-rank pointwise/pairwise ensemble 58.6%
+pairwise accuracy, a 59.4% top-1 hit rate, and 0.586 mean top-1 regret, versus exact random
+expectations of 50.0%, 46.9%, and 0.910. These are development estimates, not a replacement for
+the frozen external result. See
+[docs/v2-development-results.md](docs/v2-development-results.md) for the target definition,
+cohort check, boundary experiment, and next-test decision.
+
+The same completed reviews support a separate multimodal boundary-choice experiment:
+
+```bash
+creatorcut-train-boundaries \
+  --queue data/processed/holdout_v1/annotation_queue.jsonl \
+  --reviews data/processed/holdout_v1/annotation_reviews.jsonl \
+  --transcripts-dir data/processed/holdout_v1/transcripts \
+  --media-dir /path/to/downloaded/videos \
+  --artifact data/processed/v2/boundary_candidates_multimodal_v1.json \
+  --evaluation data/processed/v2/boundary_evaluation_v1.json \
+  --model data/processed/v2/boundary_model_v1.json
+```
+
+Nearby transcript choices achieve 0.109-second start and 0.212-second end oracle MAE, but the
+learned local-cue selector does not beat leaving the boundaries unchanged. It is therefore not
+deployed; the result motivates semantic full-clip features for each candidate edge.
+
 Test whether a ranking-specific objective improves the same hybrid representation:
 
 ```bash

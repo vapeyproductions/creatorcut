@@ -1,0 +1,67 @@
+{
+  "schema": "creatorcut_v2_development_public_summary_v1",
+  "status": "development-only; not an external holdout result",
+  "dataset": {
+    "clips": 192,
+    "videos": 32,
+    "original_development_videos": 16,
+    "promoted_after_frozen_v1_evaluation_videos": 16,
+    "boundary_edited_score_rows": 55
+  },
+  "moment_ranking": {
+    "evaluation": "leave-one-video-out cross-validation",
+    "random_expectation": {
+      "pairwise_accuracy": 0.5,
+      "top_1_hit_rate": 0.46875,
+      "mean_top_1_regret": 0.91015625,
+      "top_3_hit_rate": 0.7625,
+      "mean_top_3_regret": 0.240234375
+    },
+    "pointwise_hybrid_ridge": {
+      "pairwise_accuracy": 0.5521472392638037,
+      "top_1_hit_rate": 0.5625,
+      "mean_top_1_regret": 0.65625,
+      "top_3_hit_rate": 0.75,
+      "mean_top_3_regret": 0.2265625
+    },
+    "pairwise_hybrid_logistic": {
+      "pairwise_accuracy": 0.5797546012269938,
+      "top_1_hit_rate": 0.53125,
+      "mean_top_1_regret": 0.6328125,
+      "top_3_hit_rate": 0.90625,
+      "mean_top_3_regret": 0.1015625
+    },
+    "equal_rank_ensemble": {
+      "pairwise_accuracy": 0.5858895705521472,
+      "top_1_hit_rate": 0.59375,
+      "mean_top_1_regret": 0.5859375,
+      "top_3_hit_rate": 0.8125,
+      "mean_top_3_regret": 0.1484375
+    }
+  },
+  "boundary_selection": {
+    "evaluation": "four folds grouped by source video",
+    "start": {
+      "materially_adjusted_queries": 44,
+      "candidate_oracle_mae_seconds": 0.1090625,
+      "candidate_oracle_within_1_second_rate": 1.0,
+      "adjustment_gate_roc_auc": 0.4951923077,
+      "no_change_mae_seconds": 6.9251041667,
+      "learned_ranker_mae_seconds": 12.7711458333
+    },
+    "end": {
+      "materially_adjusted_queries": 25,
+      "candidate_oracle_mae_seconds": 0.2115625,
+      "candidate_oracle_within_1_second_rate": 0.96875,
+      "adjustment_gate_roc_auc": 0.7312676056,
+      "no_change_mae_seconds": 2.9213541667,
+      "learned_ranker_mae_seconds": 4.9358333333
+    }
+  },
+  "decision": {
+    "promote_equal_rank_ensemble_for_next_external_test": true,
+    "deploy_learned_boundary_selector": false,
+    "retain_boundary_candidate_generator": true,
+    "future_claim_requires_new_unseen_videos": true
+  }
+}
