@@ -21,6 +21,7 @@ const elements = {
   clipOrigins: document.querySelector("#clip-origins"),
   sourceDuration: document.querySelector("#source-duration"),
   clipDuration: document.querySelector("#clip-duration"),
+  selectedDuration: document.querySelector("#selected-duration"),
   exportFormats: document.querySelector("#export-formats"),
   videoStatuses: document.querySelector("#video-statuses"),
   startEdits: document.querySelector("#start-edits"),
@@ -32,6 +33,7 @@ const elements = {
   analyticsMetrics: document.querySelector("#analytics-metrics"),
   performanceMetrics: document.querySelector("#performance-metrics"),
   retentionPoints: document.querySelector("#retention-points"),
+  outcomeDistributions: document.querySelector("#outcome-distributions"),
   accountBody: document.querySelector("#account-body"),
   jobStatuses: document.querySelector("#job-statuses"),
   jobAttempts: document.querySelector("#job-attempts"),
@@ -132,6 +134,7 @@ function renderReport(report) {
   renderCounts(elements.clipOrigins, report.media.clip_origins);
   renderDistribution(elements.sourceDuration, report.media.source_duration_seconds, "seconds");
   renderDistribution(elements.clipDuration, report.media.clip_duration_seconds, "seconds");
+  renderDistribution(elements.selectedDuration, report.media.selected_duration_seconds, "seconds");
   renderCounts(elements.exportFormats, report.media.export_format_counts);
   renderCounts(elements.videoStatuses, report.media.video_status_counts);
   renderDistribution(elements.startEdits, report.editing.absolute_start_change_seconds, "seconds");
@@ -143,6 +146,35 @@ function renderReport(report) {
   renderCounts(elements.analyticsMetrics, report.analytics.metric_coverage);
   renderCounts(elements.performanceMetrics, report.analytics.performance_metric_coverage);
   renderDistribution(elements.retentionPoints, report.analytics.retention_points_per_import, "points");
+  elements.outcomeDistributions.replaceChildren();
+  const outcomeEntries = Object.entries(
+    report.analytics.performance_metric_distributions || {},
+  );
+  if (!outcomeEntries.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 6;
+    cell.textContent = "No clip outcome metrics have been uploaded yet.";
+    row.append(cell);
+    elements.outcomeDistributions.append(row);
+  } else {
+    for (const [metric, summary] of outcomeEntries) {
+      const row = document.createElement("tr");
+      for (const value of [
+        metric.replaceAll("_", " "),
+        summary.count,
+        number(summary.minimum),
+        number(summary.median),
+        number(summary.mean),
+        number(summary.maximum),
+      ]) {
+        const cell = document.createElement("td");
+        cell.textContent = value;
+        row.append(cell);
+      }
+      elements.outcomeDistributions.append(row);
+    }
+  }
   renderCounts(elements.jobStatuses, report.operations.job_status_counts);
   renderDistribution(elements.jobAttempts, report.operations.job_attempt_distribution, "attempts");
   renderCounts(elements.postActions, report.repurposing.action_counts);

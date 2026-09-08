@@ -1318,6 +1318,7 @@ class ProductStore:
         total_boundary_changes: list[float] = []
         start_boundary_changes: list[float] = []
         end_boundary_changes: list[float] = []
+        selected_durations: list[float] = []
         for row in events:
             account = accounts[row["creator_id"]]
             event_type = row["event_type"]
@@ -1331,6 +1332,10 @@ class ProductStore:
             }:
                 account["selected_clip_ids"].add(row["clip_id"])
                 selected_by_rank.setdefault(int(row["rank"]), set()).add(row["clip_id"])
+            if event_type in {"download_original", "download_edited"}:
+                selected_durations.append(
+                    float(row["end_seconds"]) - float(row["start_seconds"])
+                )
             if row["origin"] == "model" and event_type == "reject":
                 account["rejected_clip_ids"].add(row["clip_id"])
             payload = json.loads(row["payload_json"])
@@ -1383,11 +1388,15 @@ class ProductStore:
             "thumbnail_ctr",
         )
         performance_metric_coverage: Counter[str] = Counter()
+        performance_metric_values: dict[str, list[float]] = {
+            field: [] for field in performance_metric_fields
+        }
         for row in performance:
             accounts[row["creator_id"]]["performance_report_count"] += 1
             for field in performance_metric_fields:
                 if row[field] is not None:
                     performance_metric_coverage[field] += 1
+                    performance_metric_values[field].append(float(row[field]))
         repurposing_actions: Counter[str] = Counter()
         repurposing_platforms: Counter[str] = Counter()
         for row in repurposing:
@@ -1457,6 +1466,7 @@ class ProductStore:
                 "source_duration_seconds": numeric_summary(source_durations),
                 "clip_origins": dict(sorted(clip_origins.items())),
                 "clip_duration_seconds": numeric_summary(clip_durations),
+                "selected_duration_seconds": numeric_summary(selected_durations),
                 "export_format_counts": dict(sorted(export_formats.items())),
             },
             "editing": {
@@ -1477,6 +1487,11 @@ class ProductStore:
                 "performance_metric_coverage": dict(
                     sorted(performance_metric_coverage.items())
                 ),
+                "performance_metric_distributions": {
+                    field: numeric_summary(values)
+                    for field, values in performance_metric_values.items()
+                    if values
+                },
             },
             "repurposing": {
                 "feedback_count": len(repurposing),

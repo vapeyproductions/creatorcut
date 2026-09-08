@@ -174,6 +174,7 @@ def test_admin_observatory_aggregates_accounts_media_edits_and_analytics(tmp_pat
     }
     assert report["media"]["source_file_types"] == {".mp4": 1}
     assert report["media"]["clip_duration_seconds"]["median"] == 30.0
+    assert report["media"]["selected_duration_seconds"]["median"] == 28.0
     assert report["media"]["export_format_counts"] == {"vertical_captions": 1}
     assert report["editing"]["total_boundary_change_seconds"]["median"] == 2.0
     assert report["analytics"]["import_count"] == 1

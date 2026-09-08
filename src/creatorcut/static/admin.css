@@ -138,6 +138,8 @@ h3 { margin: 0 0 13px; font: bold 12px/1.2 "Courier New", monospace; text-transf
   border-top: 3px solid #111;
 }
 
+.wide-panel { grid-column: 1 / -1; }
+
 .definition-list,
 .count-list { margin: 0; font: 11px/1.4 "Courier New", monospace; }
 
