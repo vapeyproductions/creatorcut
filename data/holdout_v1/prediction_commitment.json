@@ -1,0 +1,12 @@
+{
+  "commitment_schema": "creatorcut_prediction_commitment_v1",
+  "created_at": "2026-09-08T01:27:35.429658+00:00",
+  "canonical_json_sha256": "b016380db69b77599588b93c6f631a5499986a0eaa33c12b20f6daf902acff7f",
+  "frozen_model_sha256": "0752f38fc2821070f81f17f93ebcf36123c6eefb06cf5b5a6d56c6d164c1fedf",
+  "development_dataset_sha256": "d4056622420d095eb6b22a7939e32910c96853fff5d1eeb7a4d572b07f6ec1c9",
+  "queue_sha256": "f3c9956383890c1fbde8a23d3f85898d7a15dfcc95d5838477e02727451bdce3",
+  "clips": 96,
+  "videos": 16,
+  "predictions_public": false,
+  "human_labels_present_when_sealed": false
+}

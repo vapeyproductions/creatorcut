@@ -12,9 +12,11 @@ Holdout v1 reserves `video_021` through `video_037`. Its public manifest is
 `data/holdout_v1/videos.json`; transcripts, candidate records, embeddings, reviews, predictions,
 and evaluation details remain ignored under `data/processed/holdout_v1/`.
 
-Before predictions are sealed, every source URL must be recorded and checked against the
-development manifest. A new filename is not sufficient evidence that the underlying source video
-is new.
+Each uploaded file is registered with a SHA-256 checksum before predictions are sealed. Source
+URLs were intentionally not collected for this holdout. The checksums prove which exact local
+files were evaluated, while the missing URLs mean the repository cannot independently verify
+source-level non-duplication against the development corpus. This limitation is retained rather
+than silently backfilled after evaluation.
 
 ## Fixed sequence
 
