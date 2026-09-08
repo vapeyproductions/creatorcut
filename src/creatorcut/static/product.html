@@ -151,6 +151,8 @@
           <article><strong id="report-edit-count">0</strong><span>edited downloads</span></article>
           <article><strong id="report-custom-count">0</strong><span>creator-added clips</span></article>
           <article><strong id="report-analytics-count">0</strong><span>analytics imports</span></article>
+          <article><strong id="report-post-pack-count">0</strong><span>platform post packs</span></article>
+          <article><strong id="report-post-feedback-count">0</strong><span>post copy decisions</span></article>
         </div>
 
         <section class="report-block" aria-labelledby="adaptation-title">
@@ -247,6 +249,18 @@
               <button class="reject-button plain-button" type="button">DON'T USE THIS</button>
             </div>
             <p class="clip-message" role="status"></p>
+
+            <details class="repurposing-details">
+              <summary>Create platform-specific posts</summary>
+              <p class="analytics-note">
+                Generate editable YouTube, TikTok, Instagram, and LinkedIn copy grounded in this
+                transcript. When audience evidence is sufficient, successful recurring topics
+                receive a bounded preference. Copied edits and rejections are saved as feedback.
+              </p>
+              <button class="generate-posts-button" type="button">GENERATE PLATFORM POSTS</button>
+              <p class="repurposing-note clip-message" role="status"></p>
+              <div class="repurposing-output" hidden></div>
+            </details>
 
             <details class="performance-details">
               <summary>Posted it? Import its performance</summary>

@@ -26,6 +26,7 @@ from creatorcut.publishability import (
     summarize_publishability_batch,
 )
 from creatorcut.reframing import SubjectAwareCropper, crop_left
+from creatorcut.repurposing import generate_platform_pack
 from creatorcut.semantic import (
     DEFAULT_MAX_LENGTH,
     _download_model_files,
@@ -491,6 +492,16 @@ class ProductProcessor:
         self.store.save_clip_semantic_embedding(
             clip_id, embedding.astype(float).tolist()
         )
+
+    def create_repurposing_pack(self, clip_id: str) -> dict[str, Any]:
+        """Create and persist transcript-grounded copy with creator-topic evidence."""
+        clip = self.store.get_clip(clip_id)
+        pack = generate_platform_pack(
+            clip,
+            self.store.creator_clip_documents(clip["creator_id"]),
+            self.store.creator_summary(clip["creator_id"]),
+        )
+        return self.store.save_repurposing_pack(clip_id, pack)
 
     def process_video(self, video_id: str) -> None:
         """Run validation, ASR, candidate generation, frozen scoring, and personalization."""

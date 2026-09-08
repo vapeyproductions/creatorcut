@@ -3,6 +3,7 @@ const state = {
   video: null,
   pollTimer: null,
   customPreviewEnd: null,
+  repurposingPacks: new Map(),
 };
 
 const STATUS_COPY = {
@@ -37,6 +38,8 @@ const elements = {
   reportEditCount: document.querySelector("#report-edit-count"),
   reportCustomCount: document.querySelector("#report-custom-count"),
   reportAnalyticsCount: document.querySelector("#report-analytics-count"),
+  reportPostPackCount: document.querySelector("#report-post-pack-count"),
+  reportPostFeedbackCount: document.querySelector("#report-post-feedback-count"),
   adaptationRows: document.querySelector("#adaptation-rows"),
   operationsList: document.querySelector("#operations-list"),
   lineageBody: document.querySelector("#lineage-body"),
@@ -307,7 +310,142 @@ function renderResults(video) {
     article.querySelector(".clip-analytics-form").addEventListener("submit", (event) =>
       importClipAnalytics(article, clip, event),
     );
+    article.querySelector(".generate-posts-button").addEventListener("click", (event) =>
+      generatePlatformPosts(article, clip, event.currentTarget),
+    );
     elements.clips.append(fragment);
+  }
+}
+
+function buildPlatformPosts(article, clip, pack) {
+  const output = article.querySelector(".repurposing-output");
+  output.replaceChildren();
+  for (const [platform, value] of Object.entries(pack.platforms)) {
+    const card = document.createElement("section");
+    card.className = "platform-post";
+    const heading = document.createElement("h4");
+    heading.textContent = value.label;
+    const textarea = document.createElement("textarea");
+    textarea.rows = 8;
+    textarea.value = value.text;
+    textarea.dataset.generatedText = value.text;
+    textarea.setAttribute("aria-label", `${value.label} post text`);
+    const actions = document.createElement("div");
+    actions.className = "platform-post-actions";
+    const copyButton = document.createElement("button");
+    copyButton.type = "button";
+    copyButton.textContent = "COPY & SAVE CHOICE";
+    copyButton.addEventListener("click", () =>
+      copyPlatformPost(article, clip, platform, textarea, copyButton),
+    );
+    const rejectButton = document.createElement("button");
+    rejectButton.type = "button";
+    rejectButton.className = "plain-button";
+    rejectButton.textContent = "REJECT COPY";
+    rejectButton.addEventListener("click", () =>
+      rejectPlatformPost(article, clip, platform, textarea, rejectButton),
+    );
+    actions.append(copyButton, rejectButton);
+    card.append(heading, textarea, actions);
+    output.append(card);
+  }
+  output.hidden = false;
+}
+
+async function generatePlatformPosts(article, clip, button) {
+  const note = article.querySelector(".repurposing-note");
+  button.disabled = true;
+  note.textContent = "Finding transcript topics and preparing platform copy…";
+  try {
+    const payload = await request(`/api/clips/${encodeURIComponent(clip.id)}/repurpose`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    state.repurposingPacks.set(clip.id, payload.pack);
+    buildPlatformPosts(article, clip, payload.pack);
+    const aligned = payload.pack.evidence.audience_aligned_topics || [];
+    note.textContent = aligned.length
+      ? `Personalized using positive audience terms: ${aligned.join(", ")}. ${payload.pack.note}`
+      : `No eligible audience-topic boost was applied. ${payload.pack.note}`;
+    button.textContent = "REGENERATE FROM TRANSCRIPT";
+  } catch (error) {
+    note.textContent = error.message || "Platform posts could not be generated.";
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function writeToClipboard(text, textarea) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  textarea.focus();
+  textarea.select();
+  if (!document.execCommand("copy")) throw new Error("Your browser blocked clipboard access.");
+}
+
+async function savePlatformPostFeedback(clip, platform, action, generatedText, finalText) {
+  const pack = state.repurposingPacks.get(clip.id);
+  if (!pack) throw new Error("Generate the platform posts again before saving feedback.");
+  await request(`/api/clips/${encodeURIComponent(clip.id)}/repurpose-feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      pack_id: pack.id,
+      platform,
+      action,
+      generated_text: generatedText,
+      final_text: finalText,
+    }),
+  });
+}
+
+async function copyPlatformPost(article, clip, platform, textarea, button) {
+  const note = article.querySelector(".repurposing-note");
+  const finalText = textarea.value;
+  if (!finalText.trim()) {
+    note.textContent = "Add some post text before copying it.";
+    return;
+  }
+  button.disabled = true;
+  try {
+    await writeToClipboard(finalText, textarea);
+    const generatedText = textarea.dataset.generatedText;
+    const action = finalText === generatedText ? "copied_original" : "copied_edited";
+    await savePlatformPostFeedback(
+      clip,
+      platform,
+      action,
+      generatedText,
+      finalText,
+    );
+    note.textContent = action === "copied_edited"
+      ? "Edited copy placed on the clipboard; the exact edit was saved."
+      : "Generated copy placed on the clipboard; the choice was saved.";
+  } catch (error) {
+    note.textContent = error.message || "The post choice could not be saved.";
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function rejectPlatformPost(article, clip, platform, textarea, button) {
+  const note = article.querySelector(".repurposing-note");
+  button.disabled = true;
+  try {
+    await savePlatformPostFeedback(
+      clip,
+      platform,
+      "rejected",
+      textarea.dataset.generatedText,
+      null,
+    );
+    note.textContent = `${platform} copy rejected; the decision was saved.`;
+  } catch (error) {
+    note.textContent = error.message || "The rejection could not be saved.";
+    button.disabled = false;
   }
 }
 
@@ -622,6 +760,10 @@ function renderModelReport(report) {
   elements.reportEditCount.textContent = feedback.edited_download_count;
   elements.reportCustomCount.textContent = feedback.custom_clip_count;
   elements.reportAnalyticsCount.textContent = feedback.analytics_import_count;
+  elements.reportPostPackCount.textContent = feedback.repurposing_pack_count;
+  elements.reportPostFeedbackCount.textContent = Object.values(
+    feedback.repurposing_feedback_counts || {},
+  ).reduce((total, count) => total + count, 0);
 
   elements.adaptationRows.replaceChildren();
   renderAdaptationRow(
@@ -677,6 +819,12 @@ function renderModelReport(report) {
     elements.operationsList,
     "Stored outcome records",
     `${feedback.performance_report_count} reports across ${feedback.analytics_import_count} analytics imports.`,
+  );
+  appendDefinition(
+    elements.operationsList,
+    "Repurposing feedback",
+    `${feedback.repurposing_pack_count} generated packs · ` +
+      `${formatCounts(feedback.repurposing_feedback_counts)}.`,
   );
   appendDefinition(
     elements.operationsList,

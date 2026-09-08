@@ -216,6 +216,29 @@ class ProductStore:
                 completed_at TEXT
             )
             """,
+            """
+            CREATE TABLE IF NOT EXISTS repurposing_packs (
+                id TEXT PRIMARY KEY,
+                creator_id TEXT NOT NULL REFERENCES creator_profiles(id),
+                clip_id TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+                algorithm_version TEXT NOT NULL,
+                pack_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS repurposing_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                creator_id TEXT NOT NULL REFERENCES creator_profiles(id),
+                clip_id TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+                pack_id TEXT NOT NULL REFERENCES repurposing_packs(id) ON DELETE CASCADE,
+                platform TEXT NOT NULL,
+                action TEXT NOT NULL,
+                generated_text TEXT NOT NULL,
+                final_text TEXT,
+                created_at TEXT NOT NULL
+            )
+            """,
             "CREATE INDEX IF NOT EXISTS idx_videos_creator_id ON videos(creator_id)",
             "CREATE INDEX IF NOT EXISTS idx_clips_video_id ON clips(video_id)",
             "CREATE INDEX IF NOT EXISTS idx_feedback_creator_id ON feedback_events(creator_id)",
@@ -235,6 +258,14 @@ class ProductStore:
             """
             CREATE INDEX IF NOT EXISTS idx_processing_jobs_claim
             ON processing_jobs(status, available_at, created_at)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_repurposing_packs_creator
+            ON repurposing_packs(creator_id, created_at)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_repurposing_feedback_creator
+            ON repurposing_feedback(creator_id, created_at)
             """,
         )
         with self._connect() as connection:
@@ -1032,6 +1063,17 @@ class ProductStore:
                 "SELECT COUNT(*) FROM performance_reports WHERE creator_id = ?",
                 (creator_id,),
             ).fetchone()[0]
+            repurposing_pack_count = connection.execute(
+                "SELECT COUNT(*) FROM repurposing_packs WHERE creator_id = ?",
+                (creator_id,),
+            ).fetchone()[0]
+            repurposing_feedback_rows = connection.execute(
+                """
+                SELECT action, COUNT(*) AS count FROM repurposing_feedback
+                WHERE creator_id = ? GROUP BY action
+                """,
+                (creator_id,),
+            ).fetchall()
             recent_rows = connection.execute(
                 """
                 SELECT feedback_events.event_type, feedback_events.start_seconds,
@@ -1062,6 +1104,9 @@ class ProductStore:
             for row in edits
         ]
         creator_summary = self.creator_summary(creator_id)
+        repurposing_feedback_counts = {
+            row["action"]: row["count"] for row in repurposing_feedback_rows
+        }
         publishability_summaries = [
             json.loads(row["publishability_summary_json"])
             for row in publishability_rows
@@ -1095,6 +1140,8 @@ class ProductStore:
                 "event_counts": event_counts,
                 "analytics_import_count": analytics_count,
                 "performance_report_count": performance_count,
+                "repurposing_pack_count": repurposing_pack_count,
+                "repurposing_feedback_counts": repurposing_feedback_counts,
             },
             "adaptation": creator_summary,
             "lineage": [dict(row) for row in lineage_rows],
@@ -1144,6 +1191,122 @@ class ProductStore:
         clip = dict(row)
         clip["predicted_targets"] = json.loads(clip.pop("predicted_targets_json"))
         return clip
+
+    def creator_clip_documents(self, creator_id: str) -> list[str]:
+        """Return saved clip transcripts as the creator-local topic corpus."""
+        with self._connect() as connection:
+            exists = connection.execute(
+                "SELECT 1 FROM creator_profiles WHERE id = ?", (creator_id,)
+            ).fetchone()
+            if exists is None:
+                raise KeyError(creator_id)
+            rows = connection.execute(
+                """
+                SELECT clips.transcript_text
+                FROM clips JOIN videos ON videos.id = clips.video_id
+                WHERE videos.creator_id = ? AND TRIM(clips.transcript_text) != ''
+                ORDER BY clips.created_at, clips.id
+                """,
+                (creator_id,),
+            ).fetchall()
+        return [str(row["transcript_text"]) for row in rows]
+
+    def save_repurposing_pack(
+        self, clip_id: str, pack: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Persist one generated platform pack with its algorithm lineage."""
+        clip = self.get_clip(clip_id)
+        algorithm_version = pack.get("algorithm_version")
+        if not isinstance(algorithm_version, str) or not algorithm_version:
+            raise ValueError("The repurposing pack must identify its algorithm version")
+        pack_id = f"repurpose_{uuid.uuid4().hex}"
+        created_at = utc_now()
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO repurposing_packs(
+                    id, creator_id, clip_id, algorithm_version, pack_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    pack_id,
+                    clip["creator_id"],
+                    clip_id,
+                    algorithm_version,
+                    json.dumps(pack, sort_keys=True),
+                    created_at,
+                ),
+            )
+        return {"id": pack_id, "clip_id": clip_id, "created_at": created_at, **pack}
+
+    def record_repurposing_feedback(
+        self,
+        clip_id: str,
+        pack_id: str,
+        platform: str,
+        action: str,
+        generated_text: str,
+        final_text: str | None,
+    ) -> dict[str, Any]:
+        """Record whether generated platform copy was kept, edited, or rejected."""
+        if platform not in {"youtube", "tiktok", "instagram", "linkedin"}:
+            raise ValueError("Choose a supported repurposing platform")
+        if action not in {"copied_original", "copied_edited", "rejected"}:
+            raise ValueError("Choose a supported repurposing action")
+        if not isinstance(generated_text, str) or not generated_text.strip():
+            raise ValueError("Generated text is required")
+        if action.startswith("copied") and (
+            not isinstance(final_text, str) or not final_text.strip()
+        ):
+            raise ValueError("Final text is required when copy is selected")
+        clip = self.get_clip(clip_id)
+        created_at = utc_now()
+        with self._write_lock, self._connect() as connection:
+            pack = connection.execute(
+                """
+                SELECT id, pack_json FROM repurposing_packs
+                WHERE id = ? AND clip_id = ? AND creator_id = ?
+                """,
+                (pack_id, clip_id, clip["creator_id"]),
+            ).fetchone()
+            if pack is None:
+                raise ValueError("The repurposing pack does not belong to this clip")
+            stored_pack = json.loads(pack["pack_json"])
+            expected_text = (
+                stored_pack.get("platforms", {}).get(platform, {}).get("text")
+            )
+            if generated_text != expected_text:
+                raise ValueError("Generated text does not match the stored pack")
+            if action == "copied_original" and final_text != generated_text:
+                raise ValueError("Edited copy must be recorded as copied_edited")
+            if action == "copied_edited" and final_text == generated_text:
+                raise ValueError("Unchanged copy must be recorded as copied_original")
+            cursor = connection.execute(
+                """
+                INSERT INTO repurposing_feedback(
+                    creator_id, clip_id, pack_id, platform, action,
+                    generated_text, final_text, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    clip["creator_id"],
+                    clip_id,
+                    pack_id,
+                    platform,
+                    action,
+                    generated_text.strip(),
+                    final_text.strip() if isinstance(final_text, str) else None,
+                    created_at,
+                ),
+            )
+        return {
+            "id": cursor.lastrowid,
+            "clip_id": clip_id,
+            "pack_id": pack_id,
+            "platform": platform,
+            "action": action,
+            "created_at": created_at,
+        }
 
     def save_clip_semantic_embedding(
         self, clip_id: str, embedding: list[float]
@@ -1964,6 +2127,25 @@ class ProductStore:
                 if performance:
                     for field in ("id", "creator_id", "clip_id"):
                         performance.pop(field, None)
+                repurposing_feedback = [
+                    dict(row)
+                    for row in connection.execute(
+                        """
+                        SELECT repurposing_feedback.platform,
+                               repurposing_feedback.action,
+                               repurposing_feedback.generated_text,
+                               repurposing_feedback.final_text,
+                               repurposing_packs.algorithm_version,
+                               repurposing_feedback.created_at
+                        FROM repurposing_feedback
+                        JOIN repurposing_packs
+                          ON repurposing_packs.id = repurposing_feedback.pack_id
+                        WHERE repurposing_feedback.clip_id = ?
+                        ORDER BY repurposing_feedback.id
+                        """,
+                        (clip["id"],),
+                    ).fetchall()
+                ]
                 final_start = (
                     latest_label["start_seconds"]
                     if latest_label and latest_label["start_seconds"] is not None
@@ -2016,6 +2198,7 @@ class ProductStore:
                         ),
                         "events": events,
                         "latest_performance": performance,
+                        "repurposing_feedback": repurposing_feedback,
                     }
                 )
         return records

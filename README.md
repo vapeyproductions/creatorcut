@@ -11,8 +11,10 @@ Rather than treating clip selection as an opaque generative-AI task, CreatorCut 
 3. Generate candidate short-form clips.
 4. Rank candidates using an explainable ML model.
 5. Preview and adjust the three recommended intervals.
-6. Export the source aspect ratio, a vertical 9:16 crop, or a vertical clip with burned captions.
-7. Capture editorial decisions and optional YouTube analytics for bounded feature and semantic
+6. Export the source aspect ratio, a subject-aware vertical 9:16 crop, or a vertical clip with
+   burned captions.
+7. Generate editable, transcript-grounded posts for four platforms.
+8. Capture editorial decisions, post-copy edits, and optional YouTube analytics for bounded feature and semantic
    personalization.
 
 ## ML system
@@ -103,6 +105,11 @@ Vertical exports use sampled face detection, continuity-aware target choice, tem
 and a deterministic center-crop fallback. The exact export mode is recorded with the user event;
 see [docs/subject-aware-reframing.md](docs/subject-aware-reframing.md).
 
+Platform post packs use creator-local TF-IDF topics and, when evidence gates are met, bounded
+positive audience-topic trends. Generated text, creator edits, and explicit rejections are stored
+with algorithm lineage as separate future-training signals. See
+[docs/content-repurposing.md](docs/content-repurposing.md).
+
 Export a versioned, integrity-hashed offline snapshot of the local feedback data:
 
 ```bash
@@ -110,8 +117,8 @@ creatorcut-export-feedback
 ```
 
 The ignored JSONL snapshot includes impressions, explicit choices, custom clips, timestamp deltas,
-model lineage, semantic representations, and the latest audience outcome without exposing media
-paths.
+model lineage, semantic representations, repurposing edits/rejections, and the latest audience
+outcome without exposing media paths.
 
 The in-app **Model report** makes the same system visible without opening the database. It reports
 per-creator serving/job states, model versions, presentation and choice counts, selection rate,

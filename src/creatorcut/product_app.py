@@ -25,6 +25,7 @@ from creatorcut.runtime_logging import configure_logging, log_event
 
 STATIC_DIRECTORY = Path(__file__).with_name("static")
 MAXIMUM_UPLOAD_BYTES = 5 * 1024 * 1024 * 1024
+MAXIMUM_REPURPOSING_TEXT_BYTES = 8_000
 ALLOWED_VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm"}
 LOGGER = logging.getLogger("creatorcut.web")
 
@@ -236,6 +237,18 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                     clip_id = unquote(path[len("/api/clips/") : -len("/analytics")]).strip("/")
                     self._handle_analytics_import("published_clip", clip_id)
                     return
+                if path.startswith("/api/clips/") and path.endswith("/repurpose-feedback"):
+                    clip_id = unquote(
+                        path[len("/api/clips/") : -len("/repurpose-feedback")]
+                    ).strip("/")
+                    self._handle_repurposing_feedback(clip_id)
+                    return
+                if path.startswith("/api/clips/") and path.endswith("/repurpose"):
+                    clip_id = unquote(
+                        path[len("/api/clips/") : -len("/repurpose")]
+                    ).strip("/")
+                    self._handle_repurpose(clip_id)
+                    return
                 if path.startswith("/api/videos/") and path.endswith("/analytics"):
                     video_id = unquote(path[len("/api/videos/") : -len("/analytics")]).strip("/")
                     self._handle_analytics_import("source_video", video_id)
@@ -360,6 +373,37 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
             application.processor.ensure_clip_semantic_embedding(clip_id)
             application.store.save_performance_report(clip_id, report)
             self._send_json({"saved": True}, HTTPStatus.CREATED)
+
+        def _handle_repurpose(self, clip_id: str) -> None:
+            self._read_json()
+            pack = application.processor.create_repurposing_pack(clip_id)
+            self._send_json({"pack": pack}, HTTPStatus.CREATED)
+
+        def _handle_repurposing_feedback(self, clip_id: str) -> None:
+            value = self._read_json()
+            pack_id = value.get("pack_id")
+            generated_text = value.get("generated_text")
+            final_text = value.get("final_text")
+            if not isinstance(pack_id, str) or not pack_id:
+                raise ValueError("A repurposing pack ID is required")
+            if not isinstance(generated_text, str):
+                raise ValueError("Generated text is required")
+            if len(generated_text.encode("utf-8")) > MAXIMUM_REPURPOSING_TEXT_BYTES:
+                raise ValueError("Generated text is too long")
+            if final_text is not None:
+                if not isinstance(final_text, str):
+                    raise ValueError("Final text must be text")
+                if len(final_text.encode("utf-8")) > MAXIMUM_REPURPOSING_TEXT_BYTES:
+                    raise ValueError("Final text is too long")
+            saved = application.store.record_repurposing_feedback(
+                clip_id,
+                pack_id,
+                value.get("platform"),
+                value.get("action"),
+                generated_text,
+                final_text,
+            )
+            self._send_json({"saved": True, "feedback": saved}, HTTPStatus.CREATED)
 
         def _handle_custom_clip(self, video_id: str) -> None:
             value = self._read_json()

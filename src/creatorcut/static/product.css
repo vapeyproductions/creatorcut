@@ -649,9 +649,52 @@ legend span {
   font-size: 13px;
 }
 
-.performance-details summary {
+.performance-details summary,
+.repurposing-details summary {
   cursor: pointer;
   font-weight: bold;
+}
+
+.repurposing-details {
+  margin-top: 20px;
+  padding-top: 13px;
+  border-top: 1px dotted #111;
+  font-size: 13px;
+}
+
+.repurposing-output {
+  margin-top: 14px;
+  border-top: 1px solid #111;
+}
+
+.platform-post {
+  padding: 12px 0 16px;
+  border-bottom: 1px dotted #111;
+}
+
+.platform-post h4 {
+  margin: 0 0 8px;
+  font-family: "Courier New", monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.platform-post textarea {
+  display: block;
+  width: 100%;
+  min-height: 130px;
+  padding: 9px;
+  border: 1px solid #111;
+  border-radius: 0;
+  resize: vertical;
+  font: 13px/1.45 Arial, Helvetica, sans-serif;
+}
+
+.platform-post-actions {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin-top: 8px;
 }
 
 .analytics-form {

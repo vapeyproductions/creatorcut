@@ -130,6 +130,89 @@ def test_store_can_backfill_a_legacy_clip_embedding(tmp_path):
     ]
 
 
+def test_store_persists_repurposing_lineage_and_copy_feedback(tmp_path):
+    store, creator, _, clips = populated_store(tmp_path)
+    clip_id = clips[0]["id"]
+    pack = store.save_repurposing_pack(
+        clip_id,
+        {
+            "algorithm_version": "extractive_test_v1",
+            "grounding": "extractive_transcript_only",
+            "platforms": {"youtube": {"text": "Original generated copy"}},
+        },
+    )
+
+    feedback = store.record_repurposing_feedback(
+        clip_id,
+        pack["id"],
+        "youtube",
+        "copied_edited",
+        "Original generated copy",
+        "Creator edited copy",
+    )
+
+    assert feedback["action"] == "copied_edited"
+    assert store.creator_clip_documents(creator["id"])[0].startswith("A complete")
+    report = store.creator_ml_report(creator["id"])
+    assert report["feedback"]["repurposing_pack_count"] == 1
+    assert report["feedback"]["repurposing_feedback_counts"] == {
+        "copied_edited": 1
+    }
+    exported = store.feedback_training_records(creator["id"])[0]
+    assert exported["repurposing_feedback"] == [
+        {
+            "platform": "youtube",
+            "action": "copied_edited",
+            "generated_text": "Original generated copy",
+            "final_text": "Creator edited copy",
+            "algorithm_version": "extractive_test_v1",
+            "created_at": feedback["created_at"],
+        }
+    ]
+
+
+def test_store_rejects_repurposing_feedback_for_another_clip(tmp_path):
+    store, _, _, clips = populated_store(tmp_path)
+    pack = store.save_repurposing_pack(
+        clips[0]["id"],
+        {
+            "algorithm_version": "extractive_test_v1",
+            "platforms": {"youtube": {"text": "Generated copy"}},
+        },
+    )
+
+    with pytest.raises(ValueError, match="does not belong"):
+        store.record_repurposing_feedback(
+            clips[1]["id"],
+            pack["id"],
+            "youtube",
+            "rejected",
+            "Generated copy",
+            None,
+        )
+
+
+def test_store_rejects_tampered_generated_copy(tmp_path):
+    store, _, _, clips = populated_store(tmp_path)
+    pack = store.save_repurposing_pack(
+        clips[0]["id"],
+        {
+            "algorithm_version": "extractive_test_v1",
+            "platforms": {"youtube": {"text": "Stored generated copy"}},
+        },
+    )
+
+    with pytest.raises(ValueError, match="does not match"):
+        store.record_repurposing_feedback(
+            clips[0]["id"],
+            pack["id"],
+            "youtube",
+            "copied_original",
+            "Client-supplied replacement",
+            "Client-supplied replacement",
+        )
+
+
 def test_store_records_creator_authored_clip_as_explicit_preference(tmp_path):
     store, creator, video, _ = populated_store(tmp_path)
     clip_id = store.save_custom_clip(
