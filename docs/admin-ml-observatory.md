@@ -12,6 +12,10 @@ On an existing database, register normally and run
 `creatorcut-account promote-admin --email creator@example.com`. Both the dashboard document and
 report endpoint verify the server-side session and administrator role.
 
+The controlled demo/evaluation harness is reached from the observatory at `/admin/evaluation`.
+Its page, assets, and APIs use the same administrator boundary and never appear in creator
+navigation.
+
 The observatory is designed to answer two different questions without conflating them.
 
 ## 1. Does the frozen model generalize?

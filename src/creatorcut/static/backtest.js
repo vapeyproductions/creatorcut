@@ -91,7 +91,7 @@ function renderAlignments(container, rows) {
         setBusy(line, true, "SAVING…");
         try {
           const payload = await request(
-            `/api/backtests/${encodeURIComponent(state.experiment.id)}/alignments/${encodeURIComponent(row.id)}`,
+            `/api/admin/backtests/${encodeURIComponent(state.experiment.id)}/alignments/${encodeURIComponent(row.id)}`,
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -163,7 +163,7 @@ function renderPredictions(card) {
       setBusy(form, true, "ALIGNING AND SCORING…");
       try {
         const payload = await request(
-          `/api/backtests/${encodeURIComponent(state.experiment.id)}/holdout-clips`,
+          `/api/admin/backtests/${encodeURIComponent(state.experiment.id)}/holdout-clips`,
           { method: "POST", body: new FormData(form) },
         );
         renderExperiment(payload.experiment);
@@ -210,7 +210,7 @@ function renderSource(source) {
       setBusy(form, true, "UPLOADING…");
       try {
         const payload = await request(
-          `/api/backtests/${encodeURIComponent(state.experiment.id)}/sources`,
+          `/api/admin/backtests/${encodeURIComponent(state.experiment.id)}/sources`,
           { method: "POST", body: new FormData(form) },
         );
         renderExperiment(payload.experiment);
@@ -296,7 +296,7 @@ function renderExperiment(experiment) {
 async function refreshExperiment() {
   if (!state.experiment) return;
   try {
-    const payload = await request(`/api/backtests/${encodeURIComponent(state.experiment.id)}`);
+    const payload = await request(`/api/admin/backtests/${encodeURIComponent(state.experiment.id)}`);
     renderExperiment(payload.experiment);
   } catch (error) {
     elements.experimentStatus.textContent = error.message;
@@ -315,7 +315,7 @@ elements.setupForm.addEventListener("submit", async (event) => {
   elements.setupMessage.hidden = true;
   setBusy(elements.setupForm, true, "CREATING…");
   try {
-    const payload = await request("/api/backtests", {
+    const payload = await request("/api/admin/backtests", {
       method: "POST",
       body: new FormData(elements.setupForm),
     });
@@ -338,7 +338,7 @@ elements.newTest.addEventListener("click", () => {
 });
 
 async function loadRecent() {
-  const payload = await request("/api/account/backtests");
+  const payload = await request("/api/admin/backtests");
   const list = elements.recent.querySelector("ul");
   list.replaceChildren();
   payload.experiments.forEach((experiment) => {
@@ -350,7 +350,7 @@ async function loadRecent() {
     button.className = "plain-button";
     button.textContent = "OPEN";
     button.addEventListener("click", async () => {
-      const result = await request(`/api/backtests/${encodeURIComponent(experiment.id)}`);
+      const result = await request(`/api/admin/backtests/${encodeURIComponent(experiment.id)}`);
       renderExperiment(result.experiment);
     });
     item.append(name, button);
@@ -363,7 +363,7 @@ async function loadRecent() {
 async function initialize() {
   try {
     const session = await request("/api/auth/session");
-    if (!session.authenticated) {
+    if (!session.authenticated || !session.account.is_admin) {
       elements.signin.hidden = false;
       return;
     }
@@ -373,7 +373,7 @@ async function initialize() {
     const savedId = localStorage.getItem("creatorcut_backtest_id");
     const candidate = experiments.find((item) => item.id === savedId);
     if (candidate) {
-      const payload = await request(`/api/backtests/${encodeURIComponent(candidate.id)}`);
+      const payload = await request(`/api/admin/backtests/${encodeURIComponent(candidate.id)}`);
       renderExperiment(payload.experiment);
     }
   } catch (error) {

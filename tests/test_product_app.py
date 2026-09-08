@@ -186,6 +186,9 @@ def test_http_sessions_enforce_creator_ownership_csrf_and_admin_role(tmp_path):
     assert "creatorcut_session=" in login_headers["Set-Cookie"]
     creator_cookie = login_headers["Set-Cookie"].split(";", 1)[0]
     creator_headers = {"Cookie": creator_cookie}
+    status, creator_config, _ = request("GET", "/api/config", headers=creator_headers)
+    assert status == 200
+    assert creator_config["admin_dashboard_enabled"] is False
     status, _, _ = request(
         "GET", f"/api/videos/{admin_video['id']}", headers=creator_headers
     )
@@ -210,11 +213,27 @@ def test_http_sessions_enforce_creator_ownership_csrf_and_admin_role(tmp_path):
     assert "community_lineage" not in own_video["clips"][0]
     status, _, _ = request("GET", "/admin", headers=creator_headers)
     assert status == 403
+    status, _, _ = request("GET", "/admin/evaluation", headers=creator_headers)
+    assert status == 403
+    status, _, _ = request("GET", "/assets/backtest.js", headers=creator_headers)
+    assert status == 403
+    status, _, _ = request("GET", "/api/admin/backtests", headers=creator_headers)
+    assert status == 403
+    status, _, _ = request("GET", "/api/account/backtests", headers=creator_headers)
+    assert status == 404
+    status, _, _ = request(
+        "POST",
+        "/api/admin/backtests",
+        {"name": "not allowed"},
+        {**creator_headers, "X-CSRF-Token": login["csrf_token"]},
+    )
+    assert status == 403
     status, settings, _ = request(
         "GET", "/api/account/contribution-settings", headers=creator_headers
     )
     assert status == 200
     assert settings["performance_enabled"] is False
+    assert settings["updated_at"] is None
     assert "editorial_enabled" not in settings
     status, settings, _ = request(
         "POST",
@@ -224,10 +243,12 @@ def test_http_sessions_enforce_creator_ownership_csrf_and_admin_role(tmp_path):
     )
     assert status == 200
     assert settings["performance_enabled"] is True
+    assert settings["updated_at"] is not None
+    assert settings["audit_event_count"] == 1
     status, _, _ = request(
         "GET", "/api/account/model-report", headers=creator_headers
     )
-    assert status == 403
+    assert status == 404
     status, _, _ = request(
         "POST", "/api/auth/logout", {"logout": True}, creator_headers
     )
@@ -253,3 +274,35 @@ def test_http_sessions_enforce_creator_ownership_csrf_and_admin_role(tmp_path):
     assert status == 200
     assert "frame-ancestors 'none'" in protected_headers["Content-Security-Policy"]
     assert admin_login["account"]["is_admin"] is True
+    status, admin_config, _ = request(
+        "GET", "/api/config", headers={"Cookie": admin_cookie}
+    )
+    assert status == 200
+    assert admin_config["admin_dashboard_enabled"] is True
+    status, evaluation_page, _ = request(
+        "GET", "/admin/evaluation", headers={"Cookie": admin_cookie}
+    )
+    assert status == 200
+    assert b"INTERNAL EVALUATION" in evaluation_page
+    status, _, _ = request(
+        "GET", "/assets/backtest.js", headers={"Cookie": admin_cookie}
+    )
+    assert status == 200
+    status, experiments, _ = request(
+        "GET", "/api/admin/backtests", headers={"Cookie": admin_cookie}
+    )
+    assert status == 200
+    assert experiments == {"experiments": []}
+
+
+def test_creator_page_uses_one_time_preference_dialog_without_internal_tools():
+    html = Path("src/creatorcut/static/product.html").read_text(encoding="utf-8")
+
+    assert 'id="contribution-dialog"' in html
+    assert 'id="data-preference-button"' in html
+    assert "YES, SHARE RESULTS" in html
+    assert "NO, KEEP THEM PERSONAL" in html
+    assert "MODEL REPORT" not in html
+    assert "HELD-OUT RECOMMENDATION TEST" not in html
+    assert 'href="/admin"' in html
+    assert 'href="/admin/evaluation"' not in html

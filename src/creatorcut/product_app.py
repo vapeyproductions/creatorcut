@@ -391,11 +391,13 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                 return None
             return account
 
-        def _require_admin(self) -> dict[str, Any] | None:
+        def _require_admin(
+            self, *, require_csrf: bool = False
+        ) -> dict[str, Any] | None:
             if not application.admin_dashboard_enabled:
                 self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
                 return None
-            account = self._require_account()
+            account = self._require_account(require_csrf=require_csrf)
             if account is None:
                 return None
             if not account["is_admin"]:
@@ -493,15 +495,6 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
             if path == "/assets/product.js":
                 self._send_file(STATIC_DIRECTORY / "product.js")
                 return
-            if path == "/backtest":
-                self._send_file(STATIC_DIRECTORY / "backtest.html")
-                return
-            if path == "/assets/backtest.css":
-                self._send_file(STATIC_DIRECTORY / "backtest.css")
-                return
-            if path == "/assets/backtest.js":
-                self._send_file(STATIC_DIRECTORY / "backtest.js")
-                return
             if path == "/api/config":
                 account = self._current_account()
                 self._send_json(
@@ -542,6 +535,21 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                 if self._require_admin() is None:
                     return
                 self._send_file(STATIC_DIRECTORY / "admin.js")
+                return
+            if path == "/admin/evaluation":
+                if self._require_admin() is None:
+                    return
+                self._send_file(STATIC_DIRECTORY / "backtest.html")
+                return
+            if path == "/assets/backtest.css":
+                if self._require_admin() is None:
+                    return
+                self._send_file(STATIC_DIRECTORY / "backtest.css")
+                return
+            if path == "/assets/backtest.js":
+                if self._require_admin() is None:
+                    return
+                self._send_file(STATIC_DIRECTORY / "backtest.js")
                 return
             if path == "/api/admin/model-report":
                 if self._require_admin() is None:
@@ -588,7 +596,9 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                     {"videos": application.store.list_videos(account["creator_id"])}
                 )
                 return
-            if path == "/api/account/backtests":
+            if path == "/api/admin/backtests":
+                if self._require_admin() is None:
+                    return
                 self._send_json(
                     {
                         "experiments": application.store.list_backtest_experiments(
@@ -597,8 +607,12 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                     }
                 )
                 return
-            if path.startswith("/api/backtests/"):
-                experiment_id = unquote(path[len("/api/backtests/") :]).strip("/")
+            if path.startswith("/api/admin/backtests/"):
+                if self._require_admin() is None:
+                    return
+                experiment_id = unquote(
+                    path[len("/api/admin/backtests/") :]
+                ).strip("/")
                 if "/" not in experiment_id:
                     try:
                         experiment = application.store.get_backtest_experiment(
@@ -615,16 +629,6 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                 self._send_json(
                     application.store.contribution_settings(account["creator_id"])
                 )
-                return
-            if path == "/api/account/model-report":
-                if self._require_admin() is None:
-                    return
-                try:
-                    report = application.store.creator_ml_report(account["creator_id"])
-                    report["serving_release"] = application.health()["serving_release"]
-                    self._send_json(report)
-                except KeyError:
-                    self._send_json({"error": "Creator not found"}, HTTPStatus.NOT_FOUND)
                 return
             if path == "/api/account/feedback-export":
                 try:
@@ -675,25 +679,40 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                 if path == "/api/uploads":
                     self._handle_upload(account)
                     return
-                if path == "/api/backtests":
+                if path == "/api/admin/backtests":
+                    if self._require_admin(require_csrf=True) is None:
+                        return
                     self._handle_backtest_create(account)
                     return
-                if path.startswith("/api/backtests/") and path.endswith("/sources"):
+                if path.startswith("/api/admin/backtests/") and path.endswith(
+                    "/sources"
+                ):
+                    if self._require_admin(require_csrf=True) is None:
+                        return
                     experiment_id = unquote(
-                        path[len("/api/backtests/") : -len("/sources")]
+                        path[len("/api/admin/backtests/") : -len("/sources")]
                     ).strip("/")
                     self._handle_backtest_source(experiment_id, account)
                     return
-                if path.startswith("/api/backtests/") and path.endswith(
+                if path.startswith("/api/admin/backtests/") and path.endswith(
                     "/holdout-clips"
                 ):
+                    if self._require_admin(require_csrf=True) is None:
+                        return
                     experiment_id = unquote(
-                        path[len("/api/backtests/") : -len("/holdout-clips")]
+                        path[
+                            len("/api/admin/backtests/") : -len("/holdout-clips")
+                        ]
                     ).strip("/")
                     self._handle_backtest_holdout_clips(experiment_id, account)
                     return
-                if path.startswith("/api/backtests/") and "/alignments/" in path:
-                    remainder = path[len("/api/backtests/") :]
+                if (
+                    path.startswith("/api/admin/backtests/")
+                    and "/alignments/" in path
+                ):
+                    if self._require_admin(require_csrf=True) is None:
+                        return
+                    remainder = path[len("/api/admin/backtests/") :]
                     experiment_id, actual_id = remainder.split("/alignments/", 1)
                     self._handle_backtest_alignment(
                         unquote(experiment_id.strip("/")),

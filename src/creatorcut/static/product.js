@@ -6,6 +6,7 @@ const state = {
   pollTimer: null,
   customPreviewEnd: null,
   repurposingPacks: new Map(),
+  contributionPreferenceSet: false,
 };
 
 const STATUS_COPY = {
@@ -36,32 +37,14 @@ const elements = {
   uploadError: document.querySelector("#upload-error"),
   contributionForm: document.querySelector("#contribution-form"),
   contributionStatus: document.querySelector("#contribution-status"),
+  contributionDialog: document.querySelector("#contribution-dialog"),
+  dataPreferenceButton: document.querySelector("#data-preference-button"),
   processingSection: document.querySelector("#processing-section"),
   processingFile: document.querySelector("#processing-file"),
   processingMessage: document.querySelector("#processing-message"),
   processingProgress: document.querySelector("#processing-progress"),
   resultsSection: document.querySelector("#results-section"),
-  modelReportSection: document.querySelector("#model-report-section"),
   adminLink: document.querySelector("#admin-link"),
-  modelReportButton: document.querySelector("#model-report-button"),
-  closeModelReport: document.querySelector("#close-model-report"),
-  modelReportIntro: document.querySelector("#model-report-intro"),
-  modelReportError: document.querySelector("#model-report-error"),
-  downloadFeedback: document.querySelector("#download-feedback"),
-  reportVideoCount: document.querySelector("#report-video-count"),
-  reportPresentedCount: document.querySelector("#report-presented-count"),
-  reportSelectedCount: document.querySelector("#report-selected-count"),
-  reportEditCount: document.querySelector("#report-edit-count"),
-  reportCustomCount: document.querySelector("#report-custom-count"),
-  reportAnalyticsCount: document.querySelector("#report-analytics-count"),
-  reportPostPackCount: document.querySelector("#report-post-pack-count"),
-  reportPostFeedbackCount: document.querySelector("#report-post-feedback-count"),
-  adaptationRows: document.querySelector("#adaptation-rows"),
-  operationsList: document.querySelector("#operations-list"),
-  releaseList: document.querySelector("#release-list"),
-  lineageBody: document.querySelector("#lineage-body"),
-  adjustmentList: document.querySelector("#adjustment-list"),
-  eventBody: document.querySelector("#event-body"),
   clips: document.querySelector("#clips"),
   resultsTitle: document.querySelector("#results-title"),
   personalizationStatus: document.querySelector("#personalization-status"),
@@ -82,8 +65,6 @@ const elements = {
   finishReview: document.querySelector("#finish-review"),
   finishReviewMessage: document.querySelector("#finish-review-message"),
 };
-
-elements.modelReportButton.disabled = true;
 
 function syncPlatformPlanControls() {
   for (const platform of Object.keys(PLATFORM_LABELS)) {
@@ -124,12 +105,25 @@ async function loadConfiguration() {
   try {
     const configuration = await request("/api/config");
     elements.adminLink.hidden = !configuration.admin_dashboard_enabled;
-    elements.modelReportButton.hidden = !configuration.admin_dashboard_enabled;
-    elements.modelReportButton.disabled = !configuration.admin_dashboard_enabled;
   } catch (_error) {
     elements.adminLink.hidden = true;
-    elements.modelReportButton.hidden = true;
-    elements.modelReportButton.disabled = true;
+  }
+}
+
+function openContributionDialog() {
+  elements.contributionStatus.textContent = "";
+  if (typeof elements.contributionDialog.showModal === "function") {
+    if (!elements.contributionDialog.open) elements.contributionDialog.showModal();
+  } else {
+    elements.contributionDialog.setAttribute("open", "");
+  }
+}
+
+function closeContributionDialog() {
+  if (typeof elements.contributionDialog.close === "function") {
+    if (elements.contributionDialog.open) elements.contributionDialog.close();
+  } else {
+    elements.contributionDialog.removeAttribute("open");
   }
 }
 
@@ -137,11 +131,9 @@ async function loadContributionSettings() {
   if (!state.creatorId) return;
   try {
     const settings = await request("/api/account/contribution-settings");
-    elements.contributionForm.elements.performance_enabled.checked =
-      settings.performance_enabled;
-    elements.contributionStatus.textContent = settings.updated_at
-      ? "Saved setting loaded."
-      : "Audience-result sharing is off.";
+    state.contributionPreferenceSet = Boolean(settings.updated_at);
+    elements.dataPreferenceButton.hidden = false;
+    if (!state.contributionPreferenceSet) openContributionDialog();
   } catch (error) {
     elements.contributionStatus.textContent =
       error.message || "Contribution settings could not be loaded.";
@@ -153,7 +145,6 @@ function setView(name) {
   elements.uploadSection.hidden = name !== "upload";
   elements.processingSection.hidden = name !== "processing";
   elements.resultsSection.hidden = name !== "results";
-  elements.modelReportSection.hidden = name !== "model-report";
 }
 
 function showSignedOut() {
@@ -165,9 +156,10 @@ function showSignedOut() {
   state.repurposingPacks.clear();
   elements.accountLabel.hidden = true;
   elements.logoutButton.hidden = true;
+  elements.dataPreferenceButton.hidden = true;
   elements.adminLink.hidden = true;
-  elements.modelReportButton.hidden = true;
-  elements.modelReportButton.disabled = true;
+  state.contributionPreferenceSet = false;
+  closeContributionDialog();
   setView("auth");
 }
 
@@ -178,8 +170,7 @@ async function activateSession(payload) {
   elements.accountLabel.textContent = payload.account.display_name;
   elements.accountLabel.hidden = false;
   elements.logoutButton.hidden = false;
-  elements.modelReportButton.hidden = true;
-  elements.modelReportButton.disabled = true;
+  elements.dataPreferenceButton.hidden = true;
   setView("upload");
   await Promise.all([
     loadConfiguration(),
@@ -238,28 +229,32 @@ elements.logoutButton.addEventListener("click", async () => {
 
 elements.contributionForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const button = event.currentTarget.querySelector("button[type='submit']");
-  button.disabled = true;
-  elements.contributionStatus.textContent = "Saving permissions…";
+  const choice = event.submitter?.value;
+  if (!['true', 'false'].includes(choice)) return;
+  const buttons = event.currentTarget.querySelectorAll("button[type='submit']");
+  buttons.forEach((button) => { button.disabled = true; });
+  elements.contributionStatus.textContent = "Saving your preference…";
   try {
     const settings = await request("/api/account/contribution-settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        performance_enabled:
-          event.currentTarget.elements.performance_enabled.checked,
-      }),
+      body: JSON.stringify({ performance_enabled: choice === "true" }),
     });
-    elements.contributionStatus.textContent = settings.performance_enabled
-      ? "Audience-result sharing is on."
-      : "Audience-result sharing is off.";
+    state.contributionPreferenceSet = Boolean(settings.updated_at);
+    closeContributionDialog();
   } catch (error) {
     elements.contributionStatus.textContent =
       error.message || "Contribution settings could not be saved.";
   } finally {
-    button.disabled = false;
+    buttons.forEach((button) => { button.disabled = false; });
   }
 });
+
+elements.contributionDialog.addEventListener("cancel", (event) => {
+  if (!state.contributionPreferenceSet) event.preventDefault();
+});
+
+elements.dataPreferenceButton.addEventListener("click", openContributionDialog);
 
 elements.uploadForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -360,22 +355,8 @@ function renderResults(video) {
     customEnd.value = Math.min(30, video.duration_seconds).toFixed(1);
   }
   const summary = video.creator_summary;
-  if (state.account?.is_admin) {
-    const editorial = summary.personalization_active
-      ? `Editorial preference: active from ${summary.decision_count} prior clip decisions.`
-      : `Editorial preference: ${summary.decision_count}/${summary.editorial_minimum_decision_count} decisions recorded.`;
-    const platformLearning = Object.entries(summary.platform_performance || {})
-      .map(([platform, performance]) => {
-        const status = performance.active ? "active" : "waiting";
-        return `${PLATFORM_LABELS[platform]} audience model: ${status} ` +
-          `(${performance.eligible_clip_count}/${performance.minimum_clip_count} eligible clips).`;
-      })
-      .join("\n");
-    elements.personalizationStatus.textContent = `${editorial}\n${platformLearning}`;
-  } else {
-    elements.personalizationStatus.textContent =
-      "CreatorCut adapts as you choose clips, adjust boundaries, and add audience results.";
-  }
+  elements.personalizationStatus.textContent =
+    "CreatorCut adapts as you choose clips, adjust boundaries, and add audience results.";
   renderSemanticTrends(summary);
   renderSourceAnalytics(video.source_analytics);
 
@@ -758,28 +739,30 @@ elements.finishReview.addEventListener("click", async () => {
 function renderSemanticTrends(summary) {
   elements.semanticTrends.replaceChildren();
   const heading = document.createElement("h3");
-  heading.textContent = "PLATFORM AUDIENCE PATTERNS";
+  heading.textContent = "WHAT CREATORCUT IS LEARNING";
   elements.semanticTrends.append(heading);
-  for (const [platform, performance] of Object.entries(summary.platform_performance || {})) {
+  const activePlatforms = Object.entries(summary.platform_performance || {}).filter(
+    ([, performance]) => performance.semantic_active,
+  );
+  if (!activePlatforms.length) {
+    const copy = document.createElement("p");
+    copy.textContent =
+      "Keep choosing, rejecting, and refining clips. After you add audience results for several published clips, CreatorCut will summarize recurring topics and practical recommendations here.";
+    elements.semanticTrends.append(copy);
+    return;
+  }
+  for (const [platform, performance] of activePlatforms) {
     const subheading = document.createElement("h4");
     subheading.textContent = (PLATFORM_LABELS[platform] || platform).toUpperCase();
     elements.semanticTrends.append(subheading);
-    if (!performance.semantic_active) {
-      const copy = document.createElement("p");
-      copy.textContent = state.account?.is_admin
-        ? `Waiting for ${performance.minimum_clip_count} sufficiently viewed clips with outcomes and transcript embeddings.`
-        : "Insights will appear after enough published clips have audience results.";
-      elements.semanticTrends.append(copy);
-      continue;
-    }
     const insight = document.createElement("p");
     insight.textContent =
       performance.insight_summary ||
-      "Performance adaptation is active, but no stable summary is available yet.";
+      "Your audience is beginning to show a repeatable preference pattern.";
     elements.semanticTrends.append(insight);
     for (const [label, trends] of [
-      ["STRONGER TERMS", performance.positive_semantic_trends || []],
-      ["WEAKER TERMS", performance.negative_semantic_trends || []],
+      ["TRY MORE", performance.positive_semantic_trends || []],
+      ["USE WITH CARE", performance.negative_semantic_trends || []],
     ]) {
       if (!trends.length) continue;
       const termHeading = document.createElement("h4");
@@ -787,13 +770,26 @@ function renderSemanticTrends(summary) {
       const list = document.createElement("ul");
       for (const trend of trends) {
         const item = document.createElement("li");
-        item.textContent = state.account?.is_admin
-          ? `${trend.term} (${trend.support} clips)`
-          : trend.term;
+        item.textContent = trend.term;
         list.append(item);
       }
       elements.semanticTrends.append(termHeading, list);
     }
+    const positive = (performance.positive_semantic_trends || [])
+      .slice(0, 3)
+      .map((trend) => trend.term);
+    const negative = (performance.negative_semantic_trends || [])
+      .slice(0, 2)
+      .map((trend) => trend.term);
+    const recommendation = document.createElement("p");
+    recommendation.className = "trend-recommendation";
+    recommendation.textContent = positive.length
+      ? `Recommendation: prioritize moments about ${positive.join(", ")}.` +
+        (negative.length
+          ? ` Give clips about ${negative.join(", ")} a clearer opening and faster payoff.`
+          : " Keep the opening direct and the payoff self-contained.")
+      : "Recommendation: keep testing complete, self-contained moments while more audience evidence accumulates.";
+    elements.semanticTrends.append(recommendation);
   }
 }
 
@@ -928,287 +924,6 @@ elements.newVideo.addEventListener("click", () => {
   syncPlatformPlanControls();
   setView("upload");
   loadRecentVideos();
-});
-
-function appendDefinition(list, term, description) {
-  const row = document.createElement("div");
-  const name = document.createElement("dt");
-  const value = document.createElement("dd");
-  name.textContent = term;
-  value.textContent = description;
-  row.append(name, value);
-  list.append(row);
-}
-
-function renderAdaptationRow(name, statusText, evidence, cap) {
-  const row = document.createElement("div");
-  row.className = "adaptation-row";
-  const title = document.createElement("strong");
-  const status = document.createElement("span");
-  const detail = document.createElement("span");
-  title.textContent = name;
-  status.textContent = statusText;
-  detail.textContent = `${evidence} ${cap}`;
-  row.append(title, status, detail);
-  elements.adaptationRows.append(row);
-}
-
-function formatCounts(counts) {
-  const entries = Object.entries(counts || {});
-  if (entries.length === 0) return "none recorded";
-  return entries
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([name, count]) => `${name.replaceAll("_", " ")}: ${count}`)
-    .join(" · ");
-}
-
-function formatRecordedAt(value) {
-  if (!value) return "—";
-  const date = new Date(value);
-  return Number.isNaN(date.valueOf()) ? value : date.toLocaleString();
-}
-
-function renderModelReport(report) {
-  const feedback = report.feedback;
-  const adaptation = report.adaptation;
-  const selectionRate = feedback.model_clip_selection_rate;
-  elements.modelReportIntro.textContent =
-    `${report.creator.display_name} · report generated ${formatRecordedAt(report.generated_at)} · ` +
-    `${selectionRate === null ? "selection rate not available" : `${Math.round(selectionRate * 100)}% model-clip selection rate`}`;
-  elements.reportVideoCount.textContent = report.serving.video_count;
-  elements.reportPresentedCount.textContent = feedback.presented_model_clip_count;
-  elements.reportSelectedCount.textContent = feedback.selected_model_clip_count;
-  elements.reportEditCount.textContent = feedback.edited_download_count;
-  elements.reportCustomCount.textContent = feedback.custom_clip_count;
-  elements.reportAnalyticsCount.textContent = feedback.analytics_import_count;
-  elements.reportPostPackCount.textContent = feedback.repurposing_pack_count;
-  elements.reportPostFeedbackCount.textContent = Object.values(
-    feedback.repurposing_feedback_counts || {},
-  ).reduce((total, count) => total + count, 0);
-
-  elements.adaptationRows.replaceChildren();
-  renderAdaptationRow(
-    "Global ranker",
-    "FROZEN",
-    "Frozen; promotion requires evaluation on unseen source videos.",
-    "No online updates.",
-  );
-  renderAdaptationRow(
-    "Publishability",
-    "ACTIVE",
-    `${report.publishability.candidate_count} candidates assessed across ` +
-      `${report.publishability.assessed_video_count} videos; ` +
-      `${report.publishability.blocked_candidate_count} blocked.`,
-    "Deterministic penalty capped at −0.35.",
-  );
-  renderAdaptationRow(
-    "Editorial",
-    adaptation.personalization_active ? "ACTIVE" : "WAITING",
-    `${adaptation.decision_count} explicit decisions; activates at ${adaptation.editorial_minimum_decision_count}.`,
-    "Maximum adjustment ±0.35.",
-  );
-  for (const [platform, performance] of Object.entries(
-    adaptation.platform_performance || {},
-  )) {
-    const label = PLATFORM_LABELS[platform] || platform;
-    renderAdaptationRow(
-      `${label} audience`,
-      performance.active ? "ACTIVE" : "WAITING",
-      `${performance.eligible_clip_count}/${performance.minimum_clip_count} comparable published clips.`,
-      "Combined maximum ±0.25.",
-    );
-    renderAdaptationRow(
-      `${label} semantics`,
-      performance.semantic_active ? "ACTIVE" : "WAITING",
-      `${performance.semantic_example_count}/${performance.minimum_clip_count} outcome-linked embeddings.`,
-      "Maximum component ±0.15.",
-    );
-  }
-
-  elements.operationsList.replaceChildren();
-  appendDefinition(
-    elements.operationsList,
-    "Video states",
-    formatCounts(report.serving.video_status_counts),
-  );
-  appendDefinition(
-    elements.operationsList,
-    "Persistent job states",
-    formatCounts(report.serving.job_status_counts),
-  );
-  appendDefinition(
-    elements.operationsList,
-    "Retry policy",
-    "Expiring worker leases, heartbeat renewal, exponential retry delay, 3 attempts maximum.",
-  );
-  appendDefinition(
-    elements.operationsList,
-    "Stored outcome records",
-    `${feedback.performance_report_count} reports across ${feedback.analytics_import_count} analytics imports.`,
-  );
-  appendDefinition(
-    elements.operationsList,
-    "Repurposing feedback",
-    `${feedback.repurposing_pack_count} generated packs · ` +
-      `${formatCounts(feedback.repurposing_feedback_counts)}.`,
-  );
-  appendDefinition(
-    elements.operationsList,
-    "Median boundary correction",
-    feedback.median_total_boundary_change_seconds === null
-      ? "No edited downloads yet."
-      : `${feedback.median_total_boundary_change_seconds.toFixed(1)} total seconds per edited selection.`,
-  );
-
-  const release = report.serving_release || { status: "unavailable" };
-  elements.releaseList.replaceChildren();
-  appendDefinition(elements.releaseList, "Release", release.release_id || "Not configured");
-  appendDefinition(elements.releaseList, "Status", release.status.toUpperCase());
-  appendDefinition(
-    elements.releaseList,
-    "Global ranker",
-    release.global_ranker_schema || "Unavailable",
-  );
-  appendDefinition(
-    elements.releaseList,
-    "Artifact SHA-256",
-    release.global_ranker_sha256 || "Unavailable",
-  );
-  appendDefinition(
-    elements.releaseList,
-    "Frozen components",
-    Object.entries(release.components || {})
-      .map(([name, version]) => `${name}: ${version}`)
-      .join(" · ") || "Unavailable",
-  );
-
-  elements.lineageBody.replaceChildren();
-  if (report.lineage.length === 0) {
-    const row = document.createElement("tr");
-    const cell = document.createElement("td");
-    cell.colSpan = 4;
-    cell.textContent = "No ranked recommendations have been stored for this creator yet.";
-    row.append(cell);
-    elements.lineageBody.append(row);
-  } else {
-    for (const lineage of report.lineage) {
-      const row = document.createElement("tr");
-      for (const value of [
-        lineage.model_version,
-        lineage.video_count,
-        lineage.clip_count,
-        formatRecordedAt(lineage.last_seen),
-      ]) {
-        const cell = document.createElement("td");
-        cell.textContent = value;
-        row.append(cell);
-      }
-      elements.lineageBody.append(row);
-    }
-  }
-
-  const adjustmentLabels = [
-    ["Publishability gate", "publishability"],
-    ["Editorial preference", "editorial"],
-    ["Structured performance", "performance"],
-    ["Semantic performance", "semantic"],
-    ["Source retention", "retention"],
-    ["Platform prior", "platform"],
-  ];
-  elements.adjustmentList.replaceChildren();
-  for (const [label, key] of adjustmentLabels) {
-    appendDefinition(
-      elements.adjustmentList,
-      label,
-      `mean absolute ${report.adjustments[`${key}_mean_absolute`].toFixed(3)} · ` +
-        `maximum absolute ${report.adjustments[`${key}_max_absolute`].toFixed(3)}`,
-    );
-  }
-
-  elements.eventBody.replaceChildren();
-  if (report.recent_events.length === 0) {
-    const row = document.createElement("tr");
-    const cell = document.createElement("td");
-    cell.colSpan = 5;
-    cell.textContent = "No feedback events have been recorded yet.";
-    row.append(cell);
-    elements.eventBody.append(row);
-  } else {
-    for (const event of report.recent_events) {
-      const row = document.createElement("tr");
-      const interval =
-        event.start_seconds === null || event.end_seconds === null
-          ? "—"
-          : `${formatTime(event.start_seconds)}–${formatTime(event.end_seconds)}`;
-      for (const value of [
-        event.event_type.replaceAll("_", " "),
-        event.original_filename,
-        `${PLATFORM_LABELS[event.platform] || event.platform} · ${event.origin} #${event.platform_rank || event.rank}`,
-        interval,
-        formatRecordedAt(event.created_at),
-      ]) {
-        const cell = document.createElement("td");
-        cell.textContent = value;
-        row.append(cell);
-      }
-      elements.eventBody.append(row);
-    }
-  }
-}
-
-async function loadModelReport() {
-  if (!state.creatorId) return;
-  showError(elements.modelReportError, "");
-  elements.modelReportIntro.textContent = "Loading model lineage and feedback evidence…";
-  setView("model-report");
-  try {
-    const report = await request(
-      "/api/account/model-report",
-    );
-    renderModelReport(report);
-  } catch (error) {
-    showError(elements.modelReportError, error.message || "The model report could not be loaded.");
-  }
-}
-
-elements.modelReportButton.addEventListener("click", loadModelReport);
-elements.downloadFeedback.addEventListener("click", async () => {
-  if (!state.creatorId) return;
-  elements.downloadFeedback.disabled = true;
-  elements.downloadFeedback.textContent = "PREPARING SNAPSHOT…";
-  try {
-    const response = await fetch(
-      "/api/account/feedback-export",
-      { cache: "no-store" },
-    );
-    if (!response.ok) {
-      const value = await response.json();
-      throw new Error(value.error || "The snapshot could not be created.");
-    }
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "creatorcut-feedback-snapshot.json";
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
-    elements.modelReportIntro.textContent =
-      "Feedback snapshot downloaded with model lineage and an integrity hash.";
-  } catch (error) {
-    showError(
-      elements.modelReportError,
-      error.message || "The feedback snapshot could not be downloaded.",
-    );
-  } finally {
-    elements.downloadFeedback.disabled = false;
-    elements.downloadFeedback.textContent = "DOWNLOAD ML SNAPSHOT";
-  }
-});
-elements.closeModelReport.addEventListener("click", () => {
-  if (state.video?.status === "ready") renderResults(state.video);
-  else setView("upload");
 });
 
 elements.sourceAnalyticsForm.addEventListener("submit", async (event) => {

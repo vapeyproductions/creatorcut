@@ -140,20 +140,6 @@ h2 {
   font: 11px/1.4 "Courier New", monospace;
 }
 
-.historical-test-link {
-  max-width: 640px;
-  margin: 24px 0;
-  padding: 14px 0;
-  border-top: 1px solid #111;
-  border-bottom: 1px solid #111;
-  font-family: Georgia, "Times New Roman", serif;
-}
-
-.historical-test-link a {
-  display: inline-block;
-  margin-left: 8px;
-}
-
 #upload-form {
   display: grid;
   grid-template-columns: 145px minmax(0, 460px);
@@ -257,55 +243,40 @@ button:disabled {
   width: 90px;
 }
 
-.contribution-panel {
-  max-width: 760px;
-  margin: 28px 0;
-  padding: 20px;
-  border: 2px solid #111;
+dialog#contribution-dialog {
+  width: min(620px, calc(100vw - 32px));
+  padding: 0;
+  border: 3px solid #111;
   background: #f4f2ea;
+  color: #111;
+  box-shadow: 10px 10px 0 #111;
 }
 
-.contribution-panel h2 {
-  margin-bottom: 12px;
-  font-size: clamp(25px, 4vw, 36px);
-}
-
-.contribution-panel > p:not(.section-number, .small-print) {
-  max-width: 670px;
-  line-height: 1.45;
+dialog#contribution-dialog::backdrop {
+  background: rgb(17 17 17 / 64%);
 }
 
 #contribution-form {
   display: grid;
-  gap: 12px;
-  margin: 18px 0;
+  gap: 16px;
+  margin: 0;
+  padding: 28px;
 }
 
-#contribution-form label {
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  gap: 10px;
-  align-items: start;
+#contribution-form h2,
+#contribution-form p {
+  margin: 0;
 }
 
-#contribution-form input[type="checkbox"] {
-  width: 18px;
-  min-height: 18px;
-  margin-top: 2px;
+#contribution-form h2 {
+  font-size: clamp(28px, 5vw, 42px);
 }
 
-#contribution-form span,
-#contribution-form small {
-  display: block;
-}
-
-#contribution-form small {
-  margin-top: 3px;
-  font: 11px/1.45 "Courier New", monospace;
-}
-
-#contribution-form button {
-  justify-self: start;
+.contribution-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
 }
 
 .plain-button,
@@ -612,6 +583,13 @@ progress::-moz-progress-bar {
 .semantic-trends li {
   padding: 3px 6px;
   border: 1px solid #111;
+}
+
+.semantic-trends .trend-recommendation {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dotted #111;
+  font-weight: bold;
 }
 
 .source-analytics-details {

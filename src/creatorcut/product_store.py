@@ -664,7 +664,7 @@ class ProductStore:
             )
             changes = (("performance", current["performance_enabled"], performance_enabled),)
             for contribution_type, previous, enabled in changes:
-                if previous == enabled:
+                if current["updated_at"] is not None and previous == enabled:
                     continue
                 connection.execute(
                     """

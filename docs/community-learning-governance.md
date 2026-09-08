@@ -16,8 +16,10 @@ observatory.
 
 An editorial action is part of the core clip-selection service and therefore has no contribution
 toggle. Uploaded audience outcomes can reveal more about an audience, so cross-creator use is off
-by default and is controlled by one account setting. Every change to that setting creates an
-append-only audit event with the policy version and timestamp. Turning it off immediately removes
+by default and is collected through a one-time dialog after the first successful sign-in. The
+saved choice can be reopened from the compact data-preference control in the account header.
+Every change creates an append-only audit event with the policy version and timestamp. Turning it
+off immediately removes
 the account from future community calculations. Existing frozen release artifacts are immutable.
 
 ## Community editorial prior

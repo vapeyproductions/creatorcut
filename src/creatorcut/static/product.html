@@ -19,8 +19,8 @@
       <div class="masthead-actions">
         <p>One long video in. Platform-ranked clips out.</p>
         <a id="admin-link" class="plain-link" href="/admin" hidden>ML OBSERVATORY</a>
-        <button id="model-report-button" class="plain-button" type="button" hidden disabled>MODEL REPORT</button>
         <span id="account-label" class="account-label" hidden></span>
+        <button id="data-preference-button" class="plain-button" type="button" hidden>DATA PREFERENCE</button>
         <button id="logout-button" class="plain-button" type="button" hidden>LOG OUT</button>
       </div>
     </header>
@@ -107,33 +107,6 @@
           already been published on YouTube, its retention export can inform the ranking when the
           report has enough traffic.
         </p>
-        <p class="historical-test-link">
-          Already know which Shorts a channel published?
-          <a class="plain-link" href="/backtest">RUN A HELD-OUT RECOMMENDATION TEST</a>
-        </p>
-        <section class="contribution-panel" aria-labelledby="contribution-title">
-          <p class="section-number">OPTIONAL</p>
-          <h2 id="contribution-title">Help improve future recommendations</h2>
-          <p>
-            Allow de-identified performance analytics you upload to improve recommendations for
-            creators with similar content. You can change this setting later.
-          </p>
-          <form id="contribution-form">
-            <label>
-              <input name="performance_enabled" type="checkbox" />
-              <span>
-                <strong>Share de-identified audience results</strong>
-                <small>Applies to uploaded YouTube, Instagram, and TikTok performance reports.</small>
-              </span>
-            </label>
-            <button type="submit">SAVE SETTING</button>
-            <p id="contribution-status" class="clip-message" role="status"></p>
-          </form>
-          <p class="small-print">
-            Account names, email addresses, source-video files, and raw transcripts are not
-            included in shared audience data.
-          </p>
-        </section>
         <section id="recent-section" class="recent-section" hidden>
           <h2>Recent runs</h2>
           <ul id="recent-videos"></ul>
@@ -212,80 +185,28 @@
         </section>
       </section>
 
-      <section id="model-report-section" aria-labelledby="model-report-title" hidden>
-        <div class="results-heading">
-          <div>
-            <p class="section-number">04 / ML OPERATIONS</p>
-            <h2 id="model-report-title">Model &amp; feedback report</h2>
-          </div>
-          <div class="report-actions">
-            <button id="download-feedback" class="plain-button" type="button">DOWNLOAD ML SNAPSHOT</button>
-            <button id="close-model-report" class="plain-button" type="button">BACK</button>
-          </div>
-        </div>
-        <p id="model-report-intro" class="personalization-status">Loading report…</p>
-        <p id="model-report-error" class="error report-error" role="alert" hidden></p>
-
-        <div class="report-grid" aria-label="Feedback metrics">
-          <article><strong id="report-video-count">0</strong><span>source videos</span></article>
-          <article><strong id="report-presented-count">0</strong><span>model clips presented</span></article>
-          <article><strong id="report-selected-count">0</strong><span>model clips selected</span></article>
-          <article><strong id="report-edit-count">0</strong><span>edited downloads</span></article>
-          <article><strong id="report-custom-count">0</strong><span>creator-added clips</span></article>
-          <article><strong id="report-analytics-count">0</strong><span>analytics imports</span></article>
-          <article><strong id="report-post-pack-count">0</strong><span>platform post packs</span></article>
-          <article><strong id="report-post-feedback-count">0</strong><span>post copy decisions</span></article>
-        </div>
-
-        <section class="report-block" aria-labelledby="adaptation-title">
-          <h3 id="adaptation-title">What is allowed to change ranking</h3>
-          <div id="adaptation-rows" class="adaptation-rows"></div>
-          <p class="small-print">
-            The global model stays frozen. Creator and audience adjustments are isolated,
-            evidence-gated, and capped. Production feedback cannot silently retrain or replace it.
-          </p>
-        </section>
-
-        <section class="report-block" aria-labelledby="operations-title">
-          <h3 id="operations-title">Serving reliability</h3>
-          <dl id="operations-list" class="report-definition-list"></dl>
-        </section>
-
-        <section class="report-block" aria-labelledby="release-title">
-          <h3 id="release-title">Frozen serving release</h3>
-          <dl id="release-list" class="report-definition-list"></dl>
-          <p class="small-print">
-            Readiness fails if the model artifact or a versioned serving component no longer
-            matches this release.
-          </p>
-        </section>
-
-        <section class="report-block" aria-labelledby="lineage-title">
-          <h3 id="lineage-title">Model lineage</h3>
-          <div class="table-scroll">
-            <table>
-              <thead><tr><th>Model version</th><th>Videos</th><th>Recommendations</th><th>Last used</th></tr></thead>
-              <tbody id="lineage-body"></tbody>
-            </table>
-          </div>
-        </section>
-
-        <section class="report-block" aria-labelledby="adjustments-title">
-          <h3 id="adjustments-title">Observed adjustment magnitudes</h3>
-          <dl id="adjustment-list" class="report-definition-list"></dl>
-        </section>
-
-        <section class="report-block" aria-labelledby="events-title">
-          <h3 id="events-title">Recent feedback events</h3>
-          <div class="table-scroll">
-            <table>
-              <thead><tr><th>Event</th><th>Video</th><th>Clip</th><th>Interval</th><th>Recorded</th></tr></thead>
-              <tbody id="event-body"></tbody>
-            </table>
-          </div>
-        </section>
-      </section>
     </main>
+
+    <dialog id="contribution-dialog" aria-labelledby="contribution-title">
+      <form id="contribution-form">
+        <p class="section-number">ONE-TIME DATA PREFERENCE</p>
+        <h2 id="contribution-title">Help improve future recommendations?</h2>
+        <p>
+          May CreatorCut use de-identified performance analytics you upload to improve shared
+          recommendations for creators with similar content?
+        </p>
+        <p class="small-print">
+          Your clip choices and timestamp edits already improve clip selection. Account names,
+          email addresses, source videos, and raw transcripts are never included in shared
+          audience-performance data.
+        </p>
+        <div class="contribution-actions">
+          <button name="performance_enabled" value="true" type="submit">YES, SHARE RESULTS</button>
+          <button name="performance_enabled" value="false" class="plain-button" type="submit">NO, KEEP THEM PERSONAL</button>
+        </div>
+        <p id="contribution-status" class="clip-message" role="status"></p>
+      </form>
+    </dialog>
 
     <template id="clip-template">
       <article class="clip-result">

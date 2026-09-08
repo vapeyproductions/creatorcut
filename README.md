@@ -19,8 +19,6 @@ Rather than treating clip selection as an opaque generative-AI task, CreatorCut 
 8. Generate editable, transcript-grounded posts for four platforms.
 9. Capture editorial decisions automatically and use optional YouTube, Instagram, or TikTok
    analytics for bounded feature and semantic personalization.
-10. Run a leakage-safe historical test with two reference videos and one held-out video, then
-    compare frozen recommendations with the Shorts a channel actually published.
 
 ## ML system
 
@@ -148,11 +146,11 @@ positive audience-topic trends. Generated text, creator edits, and explicit reje
 with algorithm lineage as separate future-training signals. See
 [docs/content-repurposing.md](docs/content-repurposing.md).
 
-The creator upload area also links to a dedicated historical recommendation test. It parses a
-channel tracker, automatically aligns uploaded Shorts to two reference long videos, fits a
-regularized reference-only channel layer, freezes recommendations for a third video, and reveals
-the held-out Shorts only afterward. Temporal recovery, boundary error, and performance-rank
-agreement are persisted as an evaluation record. See
+The administrator-only evaluation harness parses a channel tracker, automatically aligns uploaded
+Shorts to two reference long videos, fits a regularized reference-only channel layer, freezes
+recommendations for a third video, and reveals the held-out Shorts only afterward. It is excluded
+from the creator portal and every route is administrator-gated. Temporal recovery, boundary error,
+and performance-rank agreement are persisted as an evaluation record. See
 [docs/historical-backtest.md](docs/historical-backtest.md).
 
 Export a versioned, integrity-hashed offline snapshot of the local feedback data:

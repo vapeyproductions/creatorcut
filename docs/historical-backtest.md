@@ -1,13 +1,14 @@
 # Historical recommendation test
 
-CreatorCut includes a creator-facing test for comparing its ranked intervals with Shorts that a
-channel actually published. The test is designed as a small, honest case study rather than a claim
-that two source videos are enough to establish general model accuracy.
+CreatorCut includes an administrator-only harness for comparing its ranked intervals with Shorts
+that a channel actually published. It is intended for controlled demos and ML evaluation, not as
+a feature in the creator product. The test is designed as a small, honest case study rather than a
+claim that two source videos are enough to establish general model accuracy.
 
 ## Workflow
 
-1. Create a historical test from a CSV, TSV, or XLSX tracker with `Link`, `Views`, `Likes`,
-   `Comments`, and `video ID` columns.
+1. From the administrator ML observatory, create a historical test from a CSV, TSV, or XLSX
+   tracker with `Link`, `Views`, `Likes`, `Comments`, and `video ID` columns.
 2. Upload two reference long videos and all corresponding published Short files. Filename stems
    must match the tracker IDs, such as `training_vid_1_clip3.mp4`.
 3. CreatorCut uses audio fingerprints to map each Short back to its long-video timestamps. Low
@@ -17,7 +18,7 @@ that two source videos are enough to establish general model accuracy.
 5. A regularized channel calibration layer learns from the reference Shorts' likes-per-view and
    comments-per-view outcomes. It requires at least five aligned Shorts across both reference
    videos. Raw views gate evidence quality but do not act as the training target.
-6. Only after that layer is ready can the creator upload the held-out long video. CreatorCut saves
+6. Only after that layer is ready can the administrator upload the held-out long video. CreatorCut saves
    its exact recommendations, model release, timestamps, ranks, and relative estimates.
 7. The application then accepts the organization's held-out Short files, aligns them, and computes
    the comparison report.
@@ -57,5 +58,6 @@ possible compound edit instead of being silently treated as one continuous groun
 
 SQLite stores the experiment state, role of each source video, tracker rows, private Short paths,
 alignment method and confidence, manual corrections, the immutable prediction snapshot, serving
-release, and final evaluation. Every API read and write is restricted to the owning creator
-account. The ordinary clip workflow does not expose these details.
+release, and final evaluation. Every evaluation page, asset, API read, and API write requires an
+authenticated administrator. The ordinary creator workflow does not link to or expose the
+harness.
