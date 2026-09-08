@@ -327,7 +327,7 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                 value.get("end_seconds"),
                 float(video["duration_seconds"]),
             )
-            export_path = application.processor.export_clip(
+            export_path, reframe_metadata = application.processor.export_clip(
                 clip_id, start, end, export_format
             )
             edited = (
@@ -344,10 +344,15 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                     "start_adjustment_seconds": round(start - clip["start_seconds"], 3),
                     "end_adjustment_seconds": round(end - clip["end_seconds"], 3),
                     "export_format": export_format,
+                    "reframing": reframe_metadata,
                 },
             )
             self._send_json(
-                {"download_url": f"/api/exports/{quote(export_path.name)}", "edited": edited}
+                {
+                    "download_url": f"/api/exports/{quote(export_path.name)}",
+                    "edited": edited,
+                    "reframing": reframe_metadata,
+                }
             )
 
         def _handle_performance(self, clip_id: str) -> None:

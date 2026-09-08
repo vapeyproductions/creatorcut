@@ -468,9 +468,16 @@ async function downloadClip(article, clip, button) {
     anchor.click();
     anchor.remove();
     const formatCopy = exportFormat === "original" ? "clip" : "vertical clip";
-    message.textContent = result.edited
+    const trackingCopy =
+      result.reframing?.mode === "subject_aware_face_tracking"
+        ? " Face tracking kept the detected subject in frame."
+        : exportFormat !== "original"
+          ? " No reliable face was detected, so center-crop fallback was used."
+          : "";
+    message.textContent = (result.edited
       ? `Edited ${formatCopy} downloaded. Timestamp changes were saved.`
-      : `${formatCopy[0].toUpperCase()}${formatCopy.slice(1)} downloaded. Your selection was saved.`;
+      : `${formatCopy[0].toUpperCase()}${formatCopy.slice(1)} downloaded. Your selection was saved.`) +
+      trackingCopy;
   } catch (error) {
     message.textContent = error.message || "The clip could not be exported.";
   } finally {

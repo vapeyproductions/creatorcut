@@ -84,7 +84,7 @@ The product surface accepts an uploaded video, runs durable local transcription 
 removes high-confidence ads/music-only intervals through a versioned publishability gate, returns
 three non-duplicative recommendations, exposes global and adaptive score evidence, and
 creates frame-accurate MP4 downloads. A creator may adjust either boundary by up to 15 seconds,
-choose source-ratio or 9:16 captioned export, reject a recommendation, or define a completely custom
+choose source-ratio or face-tracked 9:16 captioned export, reject a recommendation, or define a custom
 interval. Finishing a review explicitly records untouched model options as weak unselected evidence;
 ordinary missing clicks stay unlabeled. The SQLite store keeps presentations, choices, exact edits,
 custom intervals, model lineage, and post-publication outcomes as separate records. YouTube Studio
@@ -98,6 +98,10 @@ its current evidence limits are documented in
 [docs/publishability-gate.md](docs/publishability-gate.md). Runtime data contracts,
 event semantics, model lineage, and the local-to-hosted boundary are documented in
 [docs/ml-deployment-design.md](docs/ml-deployment-design.md).
+
+Vertical exports use sampled face detection, continuity-aware target choice, temporal smoothing,
+and a deterministic center-crop fallback. The exact export mode is recorded with the user event;
+see [docs/subject-aware-reframing.md](docs/subject-aware-reframing.md).
 
 Export a versioned, integrity-hashed offline snapshot of the local feedback data:
 

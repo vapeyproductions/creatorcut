@@ -17,7 +17,7 @@ upload
   -> frozen global quality predictions
   -> editorial + performance + semantic + source-retention adjustments
   -> diverse top-three selection
-  -> preview / edit / export / reject / custom alternative
+  -> preview / edit / subject-aware export / reject / custom alternative
   -> optional YouTube outcome import
 ```
 
@@ -59,6 +59,13 @@ capped at 0.35. The ruleset version, reasons, raw signals, and applied adjustmen
 each clip and exported for future supervised evaluation. The score is not described as a learned
 probability because the current ratings do not contain a balanced publishability target.
 
+## Reframing lineage
+
+Vertical rendering samples face detections, tracks a stable subject target, and smooths the crop
+trajectory. Center crop remains the deterministic fallback. Export feedback stores the actual mode,
+detector name, detection coverage, multi-face count, and smoothing configuration so later outcome
+analysis does not mix face-tracked and fallback treatments unknowingly.
+
 ## Durable data contracts
 
 SQLite stores creator profiles, source-video jobs, clips, feedback events, audience-performance
@@ -73,7 +80,7 @@ Each persisted clip records:
 - frozen model version;
 - predicted hook, completeness, payoff, and clarity;
 - global candidate rank and global score;
-- editorial, structured-performance, semantic-performance, and source-retention adjustments;
+- publishability, editorial, structured-performance, semantic-performance, and source-retention adjustments;
 - final personalized score and explanation.
 
 The schema uses additive migrations so a local database from an earlier build gains new lineage

@@ -25,6 +25,7 @@ from creatorcut.publishability import (
     publishability_summary,
     summarize_publishability_batch,
 )
+from creatorcut.reframing import SubjectAwareCropper, crop_left
 from creatorcut.semantic import (
     DEFAULT_MAX_LENGTH,
     _download_model_files,
@@ -264,8 +265,13 @@ def _caption_font() -> Any:
     return ImageFont.load_default()
 
 
-def _vertical_image(frame: av.VideoFrame, caption: str | None) -> np.ndarray:
-    """Center-crop a frame to 9:16 and optionally burn in readable captions."""
+def _vertical_image(
+    frame: av.VideoFrame,
+    caption: str | None,
+    tracker: SubjectAwareCropper | None = None,
+    frame_index: int = 0,
+) -> np.ndarray:
+    """Crop a frame to 9:16 around a tracked face and optionally burn captions."""
     from PIL import Image, ImageDraw
 
     pixels = frame.to_ndarray(format="rgb24")
@@ -273,7 +279,12 @@ def _vertical_image(frame: av.VideoFrame, caption: str | None) -> np.ndarray:
     target_ratio = VERTICAL_EXPORT_WIDTH / VERTICAL_EXPORT_HEIGHT
     if width / height > target_ratio:
         crop_width = max(1, int(round(height * target_ratio)))
-        left = max(0, (width - crop_width) // 2)
+        center_x = (
+            tracker.center_for_frame(pixels, frame_index)
+            if tracker is not None
+            else width / 2
+        )
+        left = crop_left(width, crop_width, center_x)
         pixels = pixels[:, left : left + crop_width]
     else:
         crop_height = max(1, int(round(width / target_ratio)))
@@ -331,7 +342,7 @@ def transcode_clip(
     end: float,
     export_format: str = "original",
     caption_cues: list[dict[str, Any]] | None = None,
-) -> None:
+) -> dict[str, Any]:
     """Decode and re-encode a frame-accurate MP4 interval using bundled PyAV codecs."""
     if not isinstance(export_format, str) or export_format not in SUPPORTED_EXPORT_FORMATS:
         raise ValueError("Choose a supported export format")
@@ -369,6 +380,12 @@ def transcode_clip(
             stream_pairs[audio_input.index] = audio_output
         source.seek(int(start * av.time_base), backward=True, any_frame=False)
         completed: set[int] = set()
+        tracker = SubjectAwareCropper() if export_format != "original" else None
+        horizontal_crop = (
+            video_input.codec_context.width / video_input.codec_context.height
+            > VERTICAL_EXPORT_WIDTH / VERTICAL_EXPORT_HEIGHT
+        )
+        video_frame_index = 0
 
         for packet in source.demux([video_input] + ([audio_input] if audio_input else [])):
             if packet.stream.index not in stream_pairs:
@@ -392,8 +409,15 @@ def transcode_clip(
                     original_pts = frame.pts
                     original_time_base = frame.time_base
                     frame = av.VideoFrame.from_ndarray(
-                        _vertical_image(frame, caption), format="rgb24"
+                        _vertical_image(
+                            frame,
+                            caption,
+                            tracker=tracker,
+                            frame_index=video_frame_index,
+                        ),
+                        format="rgb24",
                     )
+                    video_frame_index += 1
                     frame.pts = original_pts
                     frame.time_base = original_time_base
                 if frame.pts is not None and frame.time_base is not None:
@@ -407,6 +431,9 @@ def transcode_clip(
             for encoded_packet in output_stream.encode(None):
                 output.mux(encoded_packet)
     temporary_path.replace(output_path)
+    if tracker is None:
+        return {"schema": "creatorcut_reframing_v1", "mode": "original_framing"}
+    return tracker.metadata(horizontal_crop=horizontal_crop)
 
 
 class ProductProcessor:
@@ -709,7 +736,7 @@ class ProductProcessor:
         start: float,
         end: float,
         export_format: str = "original",
-    ) -> Path:
+    ) -> tuple[Path, dict[str, Any]]:
         """Validate and cache one original or adjusted clip download."""
         clip = self.store.get_clip(clip_id)
         video = self.store.get_video(clip["video_id"])
@@ -722,18 +749,24 @@ class ProductProcessor:
         if not isinstance(export_format, str) or export_format not in SUPPORTED_EXPORT_FORMATS:
             raise ValueError("Choose a supported export format")
         export_dir = self.work_dir / "exports"
+        format_version = (
+            export_format
+            if export_format == "original"
+            else f"{export_format}_face_track_v1"
+        )
         export_name = (
             f"{clip_id}_{round(checked_start * 1000)}_{round(checked_end * 1000)}_"
-            f"{export_format}.mp4"
+            f"{format_version}.mp4"
         )
         output_path = export_dir / export_name
+        metadata_path = output_path.with_suffix(".metadata.json")
         if not output_path.exists():
             cues: list[dict[str, Any]] = []
             if export_format == "vertical_captions":
                 transcript_path = self.work_dir / clip["video_id"] / "transcript.json"
                 transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
                 cues = build_caption_cues(transcript, checked_start, checked_end)
-            transcode_clip(
+            reframe_metadata = transcode_clip(
                 Path(clip["media_path"]),
                 output_path,
                 checked_start,
@@ -741,4 +774,14 @@ class ProductProcessor:
                 export_format,
                 cues,
             )
-        return output_path
+            metadata_path.write_text(
+                json.dumps(reframe_metadata, indent=2), encoding="utf-8"
+            )
+        elif metadata_path.is_file():
+            reframe_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        else:
+            reframe_metadata = {
+                "schema": "creatorcut_reframing_v1",
+                "mode": "cached_export_without_tracking_metadata",
+            }
+        return output_path, reframe_metadata

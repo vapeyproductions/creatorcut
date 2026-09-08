@@ -205,7 +205,7 @@ def test_transcode_clip_creates_vertical_captioned_mp4(tmp_path):
         for packet in stream.encode(None):
             container.mux(packet)
 
-    transcode_clip(
+    metadata = transcode_clip(
         source_path,
         output_path,
         0.0,
@@ -221,6 +221,9 @@ def test_transcode_clip_creates_vertical_captioned_mp4(tmp_path):
     assert frames
     pixels = frames[len(frames) // 2].to_ndarray(format="rgb24")
     assert int(pixels[850:1100].min()) < 20
+    assert metadata["schema"] == "creatorcut_reframing_v1"
+    assert metadata["mode"] == "center_crop_fallback"
+    assert metadata["sampled_frame_count"] > 0
 
 
 @pytest.mark.parametrize(
