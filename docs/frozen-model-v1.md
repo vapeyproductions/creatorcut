@@ -17,8 +17,10 @@ without changing the model, features, thresholds, or selection rule first.
 | Selection protocol | Four deterministic folds grouped by video, seed 42 |
 | Frozen status | `frozen_for_external_holdout_evaluation` |
 
-The serialized private artifact contains the fitted feature means, scales, intercepts, and
-standardized coefficients. It remains outside Git with the private annotations and embeddings.
+The serialized artifact contains the fitted feature means, scales, intercepts, and standardized
+coefficients and is versioned at `models/frozen_model_v1.json` for reproducible local inference.
+Private annotations, transcripts, media, embeddings, and clip-level holdout predictions remain
+outside Git.
 
 ## External holdout contract
 
@@ -35,3 +37,7 @@ standardized coefficients. It remains outside Git with the private annotations a
 
 This separation prevents the next videos from becoming another informal tuning set and makes the
 reported generalization result credible to reviewers.
+
+The completed result is reported in
+[`external-holdout-v1-results.md`](external-holdout-v1-results.md). Frozen v1 is retained as the
+honest benchmark rather than refit in place.

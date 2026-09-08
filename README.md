@@ -199,6 +199,13 @@ candidate is nearly usable, its optional boundary editor can also capture adjust
 a separate score set for the edited version. These secondary labels support future boundary-model
 research without changing frozen v1's holdout target or metrics.
 
+External holdout v1 is now complete: 96 blind reviews across 16 new videos were matched to the
+committed predictions before evaluation. Frozen v1 reaches 58.8% pairwise accuracy, a 43.8% top-1
+hit rate, and 0.828 mean top-selection regret. Its best candidate appears in the top three for 13 of
+16 videos, but this exploratory result benefits from frequent ties and does not erase weak absolute
+calibration. The full preregistered and exploratory analysis is reported in
+[docs/external-holdout-v1-results.md](docs/external-holdout-v1-results.md).
+
 Test whether a ranking-specific objective improves the same hybrid representation:
 
 ```bash

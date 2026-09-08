@@ -1,0 +1,96 @@
+{
+  "report_schema": "creatorcut_external_holdout_summary_v1",
+  "status": "reported_before_any_retraining",
+  "evaluation_schema": "creatorcut_external_holdout_evaluation_v1",
+  "evaluated_at": "2026-09-08T05:33:47.078467+00:00",
+  "prediction_commitment_sha256": "b016380db69b77599588b93c6f631a5499986a0eaa33c12b20f6daf902acff7f",
+  "frozen_model_sha256": "0752f38fc2821070f81f17f93ebcf36123c6eefb06cf5b5a6d56c6d164c1fedf",
+  "development_dataset_sha256": "d4056622420d095eb6b22a7939e32910c96853fff5d1eeb7a4d572b07f6ec1c9",
+  "dataset": {
+    "clips": 96,
+    "videos": 16,
+    "technically_exportable": 96,
+    "technical_issue": 0
+  },
+  "registered_metrics": {
+    "regression": {
+      "hook": {
+        "mae": 1.5856812496623454,
+        "rmse": 1.9577355151807447,
+        "spearman": 0.04356432635715882
+      },
+      "completeness": {
+        "mae": 1.4794960792345364,
+        "rmse": 1.8661109209100848,
+        "spearman": 0.14756737334326805
+      },
+      "payoff": {
+        "mae": 1.4438393203892215,
+        "rmse": 1.8087747414157735,
+        "spearman": 0.23913271826528662
+      },
+      "clarity": {
+        "mae": 1.6436297618704023,
+        "rmse": 1.902901099324241,
+        "spearman": 0.08924499302852491
+      },
+      "quality_score": {
+        "mae": 1.2921634928171524,
+        "rmse": 1.5562049436362144,
+        "spearman": 0.2422439692385142
+      }
+    },
+    "ranking": {
+      "pairwise_accuracy": 0.5876777251184834,
+      "comparable_pairs": 211,
+      "top_1_hit_rate": 0.4375,
+      "mean_top_1_regret": 0.828125
+    }
+  },
+  "video_cluster_bootstrap": {
+    "iterations": 10000,
+    "seed": 42,
+    "top_1_hit_rate_95_percentile_interval": [
+      0.1875,
+      0.6875
+    ],
+    "mean_top_1_regret_95_percentile_interval": [
+      0.359375,
+      1.375
+    ]
+  },
+  "exploratory_product_metrics": {
+    "top_3_hit_rate": 0.8125,
+    "mean_top_3_regret": 0.21875,
+    "random_top_1_expected_hit_rate": 0.3125,
+    "random_top_1_expected_regret": 1.2265625,
+    "random_top_3_expected_hit_rate": 0.715625,
+    "random_top_3_expected_regret": 0.3203125
+  },
+  "calibration_diagnostics": {
+    "actual_quality_mean": 3.5234375,
+    "predicted_quality_mean": 2.6986008335957448,
+    "target_predictions_outside_1_to_5": 43,
+    "target_prediction_count": 384,
+    "target_prediction_minimum": -0.4035386625418602,
+    "target_prediction_maximum": 6.0077218654621305
+  },
+  "conditional_boundary_edit_diagnostics": {
+    "edited_clips": 55,
+    "unedited_clips": 41,
+    "interpretation": "Conditional on the reviewer choosing to edit; not an unbiased estimate of the effect of editing every clip.",
+    "mean_quality_change_when_an_edit_was_chosen": 1.6454545454545455,
+    "edits_with_higher_quality": 54,
+    "edits_with_equal_quality": 1,
+    "edits_with_lower_quality": 0,
+    "mean_target_changes": {
+      "hook": 2.036363636363636,
+      "completeness": 2.890909090909091,
+      "payoff": 0.6545454545454545,
+      "clarity": 1.0
+    },
+    "mean_start_adjustment_seconds": -6.3376363636363635,
+    "mean_end_adjustment_seconds": 2.779090909090909
+  }
+}
+
