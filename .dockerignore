@@ -1,0 +1,14 @@
+.git
+.github
+.pytest_cache
+.ruff_cache
+__pycache__
+*.pyc
+.env*
+artifacts
+data
+outputs
+venv
+.venv
+work
+uploads

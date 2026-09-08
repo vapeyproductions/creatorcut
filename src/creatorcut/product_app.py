@@ -5,10 +5,11 @@ from __future__ import annotations
 import argparse
 import cgi
 import json
+import logging
 import mimetypes
 import shutil
+import threading
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -19,10 +20,13 @@ from creatorcut.analytics import MAXIMUM_ANALYTICS_BYTES, parse_youtube_analytic
 from creatorcut.annotation_app import parse_byte_range
 from creatorcut.product_pipeline import ProductProcessor, validate_export_interval
 from creatorcut.product_store import ProductStore
+from creatorcut.product_worker import ProcessingWorker
+from creatorcut.runtime_logging import configure_logging, log_event
 
 STATIC_DIRECTORY = Path(__file__).with_name("static")
 MAXIMUM_UPLOAD_BYTES = 5 * 1024 * 1024 * 1024
 ALLOWED_VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm"}
+LOGGER = logging.getLogger("creatorcut.web")
 
 
 def validate_performance_report(value: Any) -> dict[str, Any]:
@@ -72,12 +76,12 @@ class ProductApplication:
         store: ProductStore,
         processor: ProductProcessor,
         upload_dir: Path,
-        executor: ThreadPoolExecutor,
+        worker_mode: str = "external",
     ) -> None:
         self.store = store
         self.processor = processor
         self.upload_dir = upload_dir
-        self.executor = executor
+        self.worker_mode = worker_mode
         self.upload_dir.mkdir(parents=True, exist_ok=True)
 
     def accept_upload(
@@ -113,8 +117,27 @@ class ProductApplication:
                 video_id=video["id"],
             )
             video = self.store.get_video(video["id"])
-        self.executor.submit(self.processor.process_video, video["id"])
+        log_event(
+            LOGGER,
+            "video_upload_queued",
+            video_id=video["id"],
+            creator_id=creator["id"],
+            original_filename=video["original_filename"],
+        )
         return {"creator": creator, "video": video}
+
+    def health(self) -> dict[str, Any]:
+        """Return serving readiness plus persistent queue counters."""
+        database_ready = self.store.database_ready()
+        model_ready = self.processor.frozen_model_path.is_file()
+        return {
+            "status": "ok" if database_ready and model_ready else "not_ready",
+            "service": "creatorcut-web",
+            "database": "ok" if database_ready else "unavailable",
+            "frozen_model": "ok" if model_ready else "missing",
+            "worker_mode": self.worker_mode,
+            "queue": self.store.processing_queue_summary() if database_ready else None,
+        }
 
 
 def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandler]:
@@ -135,8 +158,17 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
             if path == "/assets/product.js":
                 self._send_file(STATIC_DIRECTORY / "product.js")
                 return
-            if path == "/api/health":
-                self._send_json({"status": "ok"})
+            if path == "/api/health/live":
+                self._send_json({"status": "ok", "service": "creatorcut-web"})
+                return
+            if path in {"/api/health", "/api/health/ready"}:
+                health = application.health()
+                self._send_json(
+                    health,
+                    HTTPStatus.OK
+                    if health["status"] == "ok"
+                    else HTTPStatus.SERVICE_UNAVAILABLE,
+                )
                 return
             if path.startswith("/api/videos/") and path.endswith("/source"):
                 video_id = unquote(path[len("/api/videos/") : -len("/source")]).strip("/")
@@ -451,7 +483,13 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                     remaining -= len(chunk)
 
         def log_message(self, format: str, *args: Any) -> None:
-            return
+            log_event(
+                LOGGER,
+                "http_request",
+                client=self.client_address[0],
+                request=self.requestline,
+                response=format % args,
+            )
 
     return ProductHandler
 
@@ -469,10 +507,20 @@ def main() -> None:
     )
     parser.add_argument("--model-cache", type=Path, default=Path("artifacts/models"))
     parser.add_argument("--semantic-cache", type=Path, default=Path("artifacts/huggingface"))
+    parser.add_argument(
+        "--worker-mode",
+        choices=("embedded", "external"),
+        default="embedded",
+        help="Embedded keeps local use one-command; external is for separate web/worker services.",
+    )
+    parser.add_argument("--worker-id")
+    parser.add_argument("--lease-seconds", type=float, default=120.0)
+    parser.add_argument("--poll-seconds", type=float, default=1.0)
+    parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
 
+    configure_logging(args.log_level)
     store = ProductStore(args.database)
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="creatorcut-inference")
     processor = ProductProcessor(
         store,
         args.work_dir,
@@ -480,16 +528,40 @@ def main() -> None:
         args.model_cache,
         args.semantic_cache,
     )
-    application = ProductApplication(store, processor, args.upload_dir, executor)
+    application = ProductApplication(store, processor, args.upload_dir, args.worker_mode)
+    worker_stop = threading.Event()
+    worker_thread = None
+    if args.worker_mode == "embedded":
+        worker = ProcessingWorker(
+            store,
+            processor,
+            worker_id=args.worker_id,
+            lease_seconds=args.lease_seconds,
+            poll_seconds=args.poll_seconds,
+        )
+        worker_thread = threading.Thread(
+            target=worker.run_forever,
+            args=(worker_stop,),
+            name="creatorcut-embedded-worker",
+            daemon=True,
+        )
+        worker_thread.start()
     server = ThreadingHTTPServer((args.host, args.port), create_handler(application))
-    print(f"CreatorCut product website: http://{args.host}:{args.port}")
+    log_event(
+        LOGGER,
+        "web_server_started",
+        address=f"http://{args.host}:{args.port}",
+        worker_mode=args.worker_mode,
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         server.server_close()
-        executor.shutdown(wait=False, cancel_futures=True)
+        worker_stop.set()
+        if worker_thread is not None:
+            worker_thread.join(timeout=5)
 
 
 if __name__ == "__main__":

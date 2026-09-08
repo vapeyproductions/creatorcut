@@ -20,10 +20,22 @@ upload
   -> optional YouTube outcome import
 ```
 
-Processing runs in a one-worker executor so multiple uploads cannot compete for the local ASR and
-ONNX resources. Each video exposes a durable state (`queued`, `validating`, `transcribing`,
+Processing runs through a persistent job queue so multiple uploads cannot compete for the local ASR
+and ONNX resources. Each video exposes a durable state (`queued`, `validating`, `transcribing`,
 `generating_candidates`, `ranking_candidates`, `ready`, or `failed`) through the API. Failures are
 truncated and persisted instead of disappearing in a background thread.
+
+Each upload and queue record are committed together before the web request returns. A worker claims
+the oldest available job atomically, renews an expiring lease while inference runs, and records an
+attempt count. If the process disappears, another worker recovers the expired lease. Failed work is
+retried with bounded backoff and becomes a visible terminal failure after three attempts. The normal
+local command embeds the same worker loop for convenience; production mode separates the stateless
+web server from the resource-heavy ML worker.
+
+The repository includes a two-service container topology with shared persistent volumes, a non-root
+runtime image, liveness and readiness endpoints, structured JSON logs, and CI checks for lint, tests,
+and container construction. Readiness verifies the serving database and frozen model artifact;
+queue counters expose queued, running, succeeded, and failed work without revealing creator data.
 
 ## Durable data contracts
 
@@ -106,11 +118,12 @@ explicit promotion decision. Production analytics do not silently fine-tune the 
 
 ## Hosted deployment boundary
 
-The current build is a complete local deployment, but it does not pretend to be internet-scale. A
-hosted version would replace the in-process executor with a durable job queue, local media with
-object storage and lifecycle policies, SQLite with managed Postgres, and the local creator profile
-with authenticated tenant isolation. It would also add retryable job leases, structured logs,
-latency/error dashboards, data export/deletion controls, and model/data drift alerts.
+The current build is deployable on one durable host and does not pretend to be internet-scale. Its
+web/worker separation, retryable leases, structured logs, health probes, container image, and CI are
+operational today. A multi-host version would replace local media with object storage and lifecycle
+policies, SQLite with managed Postgres, and the local creator profile with authenticated tenant
+isolation. It would also add centralized latency/error dashboards, data export/deletion controls,
+and model/data drift alerts.
 
 Those infrastructure substitutions do not change the event or model contracts described above,
 which is the reason they are defined separately from the local storage implementation.

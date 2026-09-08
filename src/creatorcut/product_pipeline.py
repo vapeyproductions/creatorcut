@@ -587,6 +587,7 @@ class ProductProcessor:
             self.store.update_video(video_id, "ready")
         except Exception as error:  # background failures must become visible job state
             self.store.update_video(video_id, "failed", error_message=str(error)[:500])
+            raise
 
     def create_custom_clip(
         self, video_id: str, start_seconds: float, end_seconds: float

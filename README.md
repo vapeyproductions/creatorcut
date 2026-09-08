@@ -57,7 +57,30 @@ Run the local product website:
 creatorcut-web
 ```
 
-The product surface accepts an uploaded video, runs local transcription and frozen-model ranking,
+That command starts the web process plus a durable embedded worker for convenient local use. The
+upload itself and its processing job are both committed to SQLite before the request returns. Jobs
+use expiring leases, heartbeats, bounded retries, and persisted errors, so a stopped worker can
+recover unfinished work instead of losing an in-memory task.
+
+Run the production-shaped web and ML worker as separate processes:
+
+```bash
+creatorcut-web --host 0.0.0.0 --worker-mode external
+creatorcut-worker
+```
+
+Or build the same two-service topology with shared persistent volumes:
+
+```bash
+docker compose up --build
+```
+
+`/api/health/live` reports web-process liveness. `/api/health/ready` verifies the database and frozen
+model artifact and reports persistent queued/running/succeeded/failed job counts. Both processes
+emit one-line structured JSON events suitable for a hosted log drain. GitHub Actions runs lint,
+tests, and a clean container build on every push and pull request.
+
+The product surface accepts an uploaded video, runs durable local transcription and frozen-model ranking,
 returns three non-duplicative recommendations, exposes global and adaptive score evidence, and
 creates frame-accurate MP4 downloads. A creator may adjust either boundary by up to 15 seconds,
 choose source-ratio or 9:16 captioned export, reject a recommendation, or define a completely custom

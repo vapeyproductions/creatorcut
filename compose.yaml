@@ -1,0 +1,56 @@
+services:
+  web:
+    build: .
+    command:
+      - creatorcut-web
+      - --host
+      - 0.0.0.0
+      - --worker-mode
+      - external
+      - --database
+      - /app/runtime/creatorcut.sqlite
+      - --upload-dir
+      - /app/runtime/uploads
+      - --work-dir
+      - /app/runtime/work
+      - --model-cache
+      - /app/artifacts/whisper
+      - --semantic-cache
+      - /app/artifacts/huggingface
+    ports:
+      - "8780:8780"
+    volumes:
+      - creatorcut-data:/app/runtime
+      - creatorcut-model-cache:/app/artifacts
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8780/api/health/ready', timeout=5)"
+      interval: 15s
+      timeout: 6s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command:
+      - creatorcut-worker
+      - --database
+      - /app/runtime/creatorcut.sqlite
+      - --work-dir
+      - /app/runtime/work
+      - --model-cache
+      - /app/artifacts/whisper
+      - --semantic-cache
+      - /app/artifacts/huggingface
+    volumes:
+      - creatorcut-data:/app/runtime
+      - creatorcut-model-cache:/app/artifacts
+    restart: unless-stopped
+
+volumes:
+  creatorcut-data:
+  creatorcut-model-cache:

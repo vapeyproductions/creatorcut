@@ -8,7 +8,7 @@ import re
 import sqlite3
 import threading
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from statistics import median
 from typing import Any
@@ -199,6 +199,23 @@ class ProductStore:
                 created_at TEXT NOT NULL
             )
             """,
+            """
+            CREATE TABLE IF NOT EXISTS processing_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                video_id TEXT NOT NULL UNIQUE REFERENCES videos(id) ON DELETE CASCADE,
+                status TEXT NOT NULL,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                max_attempts INTEGER NOT NULL DEFAULT 3,
+                available_at TEXT NOT NULL,
+                lease_owner TEXT,
+                lease_expires_at TEXT,
+                last_error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT
+            )
+            """,
             "CREATE INDEX IF NOT EXISTS idx_videos_creator_id ON videos(creator_id)",
             "CREATE INDEX IF NOT EXISTS idx_clips_video_id ON clips(video_id)",
             "CREATE INDEX IF NOT EXISTS idx_feedback_creator_id ON feedback_events(creator_id)",
@@ -215,13 +232,41 @@ class ProductStore:
             CREATE INDEX IF NOT EXISTS idx_analytics_video_id
             ON analytics_imports(video_id)
             """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_processing_jobs_claim
+            ON processing_jobs(status, available_at, created_at)
+            """,
         )
         with self._connect() as connection:
             connection.execute("PRAGMA journal_mode = WAL")
             for statement in statements:
                 connection.execute(statement)
             self._add_missing_columns(connection)
+            self._backfill_processing_jobs(connection)
             connection.execute("PRAGMA optimize")
+
+    @staticmethod
+    def _backfill_processing_jobs(connection: sqlite3.Connection) -> None:
+        """Give databases from older builds a durable job record per upload."""
+        now = utc_now()
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO processing_jobs(
+                video_id, status, attempt_count, max_attempts, available_at,
+                created_at, updated_at, completed_at
+            )
+            SELECT id,
+                   CASE
+                       WHEN status = 'ready' THEN 'succeeded'
+                       WHEN status = 'failed' THEN 'failed'
+                       ELSE 'queued'
+                   END,
+                   0, 3, ?, created_at, updated_at,
+                   CASE WHEN status IN ('ready', 'failed') THEN updated_at ELSE NULL END
+            FROM videos
+            """,
+            (now,),
+        )
 
     @staticmethod
     def _add_missing_columns(connection: sqlite3.Connection) -> None:
@@ -297,6 +342,15 @@ class ProductStore:
                     created_at,
                 ),
             )
+            connection.execute(
+                """
+                INSERT INTO processing_jobs(
+                    video_id, status, attempt_count, max_attempts, available_at,
+                    created_at, updated_at
+                ) VALUES (?, 'queued', 0, 3, ?, ?, ?)
+                """,
+                (video_id, created_at, created_at, created_at),
+            )
         return self.get_video(video_id)
 
     def update_video(
@@ -319,6 +373,252 @@ class ProductStore:
             )
             if cursor.rowcount != 1:
                 raise KeyError(video_id)
+            if status == "ready":
+                connection.execute(
+                    """
+                    UPDATE processing_jobs
+                    SET status = 'succeeded', lease_owner = NULL,
+                        lease_expires_at = NULL, completed_at = ?, updated_at = ?
+                    WHERE video_id = ? AND status != 'succeeded'
+                    """,
+                    (utc_now(), utc_now(), video_id),
+                )
+
+    def claim_next_processing_job(
+        self,
+        worker_id: str,
+        lease_seconds: float = 120.0,
+        now: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        """Atomically claim the oldest available job and recover expired leases."""
+        if not worker_id.strip():
+            raise ValueError("worker_id must be non-empty")
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        claimed_at = now or datetime.now(UTC)
+        claimed_at_text = claimed_at.isoformat()
+        lease_expires_at = (claimed_at + timedelta(seconds=lease_seconds)).isoformat()
+        with self._write_lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            expired = connection.execute(
+                """
+                SELECT id, video_id, attempt_count, max_attempts
+                FROM processing_jobs
+                WHERE status = 'running' AND lease_expires_at <= ?
+                """,
+                (claimed_at_text,),
+            ).fetchall()
+            for job in expired:
+                exhausted = job["attempt_count"] >= job["max_attempts"]
+                connection.execute(
+                    """
+                    UPDATE processing_jobs
+                    SET status = ?, lease_owner = NULL, lease_expires_at = NULL,
+                        last_error = ?, completed_at = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        "failed" if exhausted else "queued",
+                        "Worker lease expired before the job completed",
+                        claimed_at_text if exhausted else None,
+                        claimed_at_text,
+                        job["id"],
+                    ),
+                )
+                connection.execute(
+                    """
+                    UPDATE videos SET status = ?, error_message = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        "failed" if exhausted else "queued",
+                        "Processing worker stopped; the job was recovered"
+                        if not exhausted
+                        else "Processing failed after all retry attempts",
+                        claimed_at_text,
+                        job["video_id"],
+                    ),
+                )
+            job = connection.execute(
+                """
+                SELECT * FROM processing_jobs
+                WHERE status = 'queued' AND available_at <= ?
+                  AND attempt_count < max_attempts
+                ORDER BY available_at, created_at, id
+                LIMIT 1
+                """,
+                (claimed_at_text,),
+            ).fetchone()
+            if job is None:
+                return None
+            cursor = connection.execute(
+                """
+                UPDATE processing_jobs
+                SET status = 'running', attempt_count = attempt_count + 1,
+                    lease_owner = ?, lease_expires_at = ?,
+                    started_at = COALESCE(started_at, ?), updated_at = ?
+                WHERE id = ? AND status = 'queued'
+                """,
+                (
+                    worker_id,
+                    lease_expires_at,
+                    claimed_at_text,
+                    claimed_at_text,
+                    job["id"],
+                ),
+            )
+            if cursor.rowcount != 1:
+                return None
+            connection.execute(
+                """
+                UPDATE videos SET status = 'queued', error_message = NULL, updated_at = ?
+                WHERE id = ?
+                """,
+                (claimed_at_text, job["video_id"]),
+            )
+            claimed = connection.execute(
+                "SELECT * FROM processing_jobs WHERE id = ?", (job["id"],)
+            ).fetchone()
+        return dict(claimed)
+
+    def extend_processing_lease(
+        self,
+        job_id: int,
+        worker_id: str,
+        lease_seconds: float = 120.0,
+        now: datetime | None = None,
+    ) -> bool:
+        """Extend a running job lease while expensive inference is active."""
+        renewed_at = now or datetime.now(UTC)
+        expires_at = (renewed_at + timedelta(seconds=lease_seconds)).isoformat()
+        with self._write_lock, self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE processing_jobs
+                SET lease_expires_at = ?, updated_at = ?
+                WHERE id = ? AND status = 'running' AND lease_owner = ?
+                """,
+                (expires_at, renewed_at.isoformat(), job_id, worker_id),
+            )
+        return cursor.rowcount == 1
+
+    def complete_processing_job(self, job_id: int, worker_id: str) -> None:
+        """Mark a claimed job complete after its video reaches ready state."""
+        completed_at = utc_now()
+        with self._write_lock, self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE processing_jobs
+                SET status = 'succeeded', lease_owner = NULL,
+                    lease_expires_at = NULL, completed_at = ?, updated_at = ?
+                WHERE id = ? AND status IN ('running', 'succeeded')
+                  AND (lease_owner = ? OR lease_owner IS NULL)
+                """,
+                (completed_at, completed_at, job_id, worker_id),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Processing job lease is no longer owned by this worker")
+
+    def fail_processing_job(
+        self,
+        job_id: int,
+        worker_id: str,
+        error: str,
+        retry_delay_seconds: float = 0.0,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Retry a claimed job when possible, otherwise persist terminal failure."""
+        failed_at = now or datetime.now(UTC)
+        failed_at_text = failed_at.isoformat()
+        with self._write_lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            job = connection.execute(
+                """
+                SELECT * FROM processing_jobs
+                WHERE id = ? AND status = 'running' AND lease_owner = ?
+                """,
+                (job_id, worker_id),
+            ).fetchone()
+            if job is None:
+                raise RuntimeError("Processing job lease is no longer owned by this worker")
+            retrying = job["attempt_count"] < job["max_attempts"]
+            available_at = (
+                failed_at + timedelta(seconds=max(0.0, retry_delay_seconds))
+            ).isoformat()
+            connection.execute(
+                """
+                UPDATE processing_jobs
+                SET status = ?, available_at = ?, lease_owner = NULL,
+                    lease_expires_at = NULL, last_error = ?, completed_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    "queued" if retrying else "failed",
+                    available_at,
+                    str(error)[:500],
+                    None if retrying else failed_at_text,
+                    failed_at_text,
+                    job_id,
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE videos SET status = ?, error_message = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    "queued" if retrying else "failed",
+                    f"Retry scheduled after attempt {job['attempt_count']}"
+                    if retrying
+                    else str(error)[:500],
+                    failed_at_text,
+                    job["video_id"],
+                ),
+            )
+            saved = connection.execute(
+                "SELECT * FROM processing_jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+        return dict(saved)
+
+    def processing_job_for_video(self, video_id: str) -> dict[str, Any] | None:
+        """Return operational job state without exposing local paths."""
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, status, attempt_count, max_attempts, available_at,
+                       lease_owner, lease_expires_at, last_error, created_at,
+                       updated_at, started_at, completed_at
+                FROM processing_jobs WHERE video_id = ?
+                """,
+                (video_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def processing_queue_summary(self) -> dict[str, Any]:
+        """Return small operational counters for health checks and monitoring."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT status, COUNT(*) AS count FROM processing_jobs GROUP BY status"
+            ).fetchall()
+            oldest = connection.execute(
+                "SELECT MIN(created_at) AS created_at FROM processing_jobs WHERE status = 'queued'"
+            ).fetchone()["created_at"]
+        counts = {row["status"]: row["count"] for row in rows}
+        return {
+            "queued": counts.get("queued", 0),
+            "running": counts.get("running", 0),
+            "succeeded": counts.get("succeeded", 0),
+            "failed": counts.get("failed", 0),
+            "oldest_queued_at": oldest,
+        }
+
+    def database_ready(self) -> bool:
+        """Probe the serving database without changing application records."""
+        try:
+            with self._connect() as connection:
+                return connection.execute("SELECT 1").fetchone()[0] == 1
+        except sqlite3.Error:
+            return False
 
     def save_ranked_clips(self, video_id: str, clips: list[dict[str, Any]]) -> None:
         """Persist the three displayed results and one exposure event per result."""
@@ -550,6 +850,7 @@ class ProductStore:
             ).fetchall()
         video.pop("media_path")
         video["clips"] = [self._public_clip(dict(clip)) for clip in clips]
+        video["job"] = self.processing_job_for_video(video_id)
         video["source_analytics"] = self.source_analytics_summary(video_id)
         return video
 
