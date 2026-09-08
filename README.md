@@ -78,9 +78,19 @@ docker compose up --build
 ```
 
 `/api/health/live` reports web-process liveness. `/api/health/ready` verifies the database and frozen
-model artifact and reports persistent queued/running/succeeded/failed job counts. Both processes
+serving release and reports persistent queued/running/succeeded/failed job counts. Both processes
 emit one-line structured JSON events suitable for a hosted log drain. GitHub Actions runs lint,
 tests, and a clean container build on every push and pull request.
+
+Verify the immutable release contract directly:
+
+```bash
+creatorcut-verify-release
+```
+
+The release manifest pins the global-model digest, encoder revision, component versions,
+personalization gates, and adjustment caps. Production inference refuses to run when that contract
+does not match the artifact and runtime.
 
 The product surface accepts an uploaded video, runs durable local transcription and frozen-model ranking,
 removes high-confidence ads/music-only intervals through a versioned publishability gate, returns
@@ -123,8 +133,9 @@ outcome without exposing media paths.
 The in-app **Model report** makes the same system visible without opening the database. It reports
 per-creator serving/job states, model versions, presentation and choice counts, selection rate,
 timestamp-correction magnitude, audience-data coverage, adaptive-layer gates, score-adjustment
-magnitudes, and a recent event audit trail. Empty or insufficient evidence is shown as such rather
-than converted into a success metric.
+magnitudes, the verified serving release, and a recent event audit trail. Its download action
+exports the creator's versioned, integrity-hashed ML snapshot without media paths. Empty or
+insufficient evidence is shown as such rather than converted into a success metric.
 
 Validate the source manifest and annotations:
 

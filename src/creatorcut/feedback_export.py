@@ -21,20 +21,11 @@ def canonical_sha256(value: Any) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def export_feedback_snapshot(
-    database: Path,
-    output_records: Path,
-    output_summary: Path,
-    creator_id: str | None = None,
+def build_feedback_snapshot(
+    store: ProductStore, creator_id: str | None = None
 ) -> dict[str, Any]:
-    """Write JSONL training records plus a small integrity and lineage manifest."""
-    records = ProductStore(database).feedback_training_records(creator_id)
-    output_records.parent.mkdir(parents=True, exist_ok=True)
-    output_summary.parent.mkdir(parents=True, exist_ok=True)
-    output_records.write_text(
-        "".join(json.dumps(record, sort_keys=True) + "\n" for record in records),
-        encoding="utf-8",
-    )
+    """Build an integrity-hashed export without writing or exposing media paths."""
+    records = store.feedback_training_records(creator_id)
     summary = {
         "schema": FEEDBACK_SNAPSHOT_SCHEMA,
         "created_at": datetime.now(UTC).isoformat(),
@@ -48,8 +39,44 @@ def export_feedback_snapshot(
         "performance_record_count": sum(
             record["latest_performance"] is not None for record in records
         ),
+        "model_versions": sorted(
+            {
+                record["ranking_model_version"]
+                for record in records
+                if record["ranking_model_version"]
+            }
+        ),
+        "repurposing_feedback_count": sum(
+            len(record["repurposing_feedback"]) for record in records
+        ),
+        "repurposing_algorithm_versions": sorted(
+            {
+                item["algorithm_version"]
+                for record in records
+                for item in record["repurposing_feedback"]
+            }
+        ),
         "records_sha256": canonical_sha256(records),
     }
+    return {"summary": summary, "records": records}
+
+
+def export_feedback_snapshot(
+    database: Path,
+    output_records: Path,
+    output_summary: Path,
+    creator_id: str | None = None,
+) -> dict[str, Any]:
+    """Write JSONL training records plus a small integrity and lineage manifest."""
+    snapshot = build_feedback_snapshot(ProductStore(database), creator_id)
+    records = snapshot["records"]
+    output_records.parent.mkdir(parents=True, exist_ok=True)
+    output_summary.parent.mkdir(parents=True, exist_ok=True)
+    output_records.write_text(
+        "".join(json.dumps(record, sort_keys=True) + "\n" for record in records),
+        encoding="utf-8",
+    )
+    summary = snapshot["summary"]
     output_summary.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return summary
 

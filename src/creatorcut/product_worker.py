@@ -137,6 +137,7 @@ def build_processor(
     frozen_model: Path,
     model_cache: Path,
     semantic_cache: Path,
+    serving_release: Path | None = None,
 ) -> ProductProcessor:
     """Build the inference pipeline from deployment-facing paths."""
     return ProductProcessor(
@@ -145,6 +146,7 @@ def build_processor(
         frozen_model,
         model_cache,
         semantic_cache,
+        serving_release,
     )
 
 
@@ -155,6 +157,11 @@ def main() -> None:
     parser.add_argument("--work-dir", type=Path, default=Path("data/product/work"))
     parser.add_argument(
         "--frozen-model", type=Path, default=Path("models/frozen_model_v1.json")
+    )
+    parser.add_argument(
+        "--serving-release",
+        type=Path,
+        default=Path("models/serving_release_v1.json"),
     )
     parser.add_argument("--model-cache", type=Path, default=Path("artifacts/models"))
     parser.add_argument("--semantic-cache", type=Path, default=Path("artifacts/huggingface"))
@@ -173,6 +180,7 @@ def main() -> None:
         args.frozen_model,
         args.model_cache,
         args.semantic_cache,
+        args.serving_release,
     )
     worker = ProcessingWorker(
         store,

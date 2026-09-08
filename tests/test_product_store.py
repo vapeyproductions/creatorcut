@@ -63,6 +63,7 @@ def test_store_persists_upload_clips_and_presentations(tmp_path):
     assert [clip["id"] for clip in saved["clips"]] == [clip["id"] for clip in clips]
     assert store.creator_summary(creator["id"]) == {
         "decision_count": 0,
+        "editorial_minimum_decision_count": 3,
         "performance_report_count": 0,
         "analytics_import_count": 0,
         "personalization_active": False,

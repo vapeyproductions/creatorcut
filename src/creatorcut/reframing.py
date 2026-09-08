@@ -9,6 +9,7 @@ import numpy as np
 
 FaceBox = tuple[int, int, int, int]
 FaceDetector = Callable[[np.ndarray], list[FaceBox]]
+REFRAMING_VERSION = "creatorcut_reframing_v1"
 
 
 def smooth_center(
@@ -155,7 +156,7 @@ class SubjectAwareCropper:
             else "vertical_source_fit"
         )
         return {
-            "schema": "creatorcut_reframing_v1",
+            "schema": REFRAMING_VERSION,
             "mode": mode,
             "detector": self.detector_name,
             "frame_count": self.frame_count,

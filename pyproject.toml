@@ -60,6 +60,7 @@ creatorcut-web = "creatorcut.product_app:main"
 creatorcut-worker = "creatorcut.product_worker:main"
 creatorcut-evaluate-publishability = "creatorcut.publishability:main"
 creatorcut-export-feedback = "creatorcut.feedback_export:main"
+creatorcut-verify-release = "creatorcut.serving_release:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

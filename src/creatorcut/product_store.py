@@ -23,6 +23,7 @@ EDITORIAL_EVENT_WEIGHTS = {
     "reject": -1.0,
 }
 PERSONALIZATION_PRIOR_STRENGTH = 8.0
+MINIMUM_EDITORIAL_DECISIONS = 3
 MAXIMUM_PERSONALIZATION_ADJUSTMENT = 0.35
 PERFORMANCE_PRIOR_STRENGTH = 12.0
 MAXIMUM_PERFORMANCE_ADJUSTMENT = 0.25
@@ -1891,7 +1892,7 @@ class ProductStore:
             ]
 
         count = len(examples)
-        active = count >= 3
+        active = count >= MINIMUM_EDITORIAL_DECISIONS
         shrinkage = count / (count + PERSONALIZATION_PRIOR_STRENGTH) if active else 0.0
         if active:
             weights = [shrinkage * weight / count for weight in weights]
@@ -2059,9 +2060,10 @@ class ProductStore:
         _, _, performance = self._performance_preference_profile(creator_id)
         return {
             "decision_count": decision_count,
+            "editorial_minimum_decision_count": MINIMUM_EDITORIAL_DECISIONS,
             "performance_report_count": performance_count,
             "analytics_import_count": analytics_count,
-            "personalization_active": decision_count >= 3,
+            "personalization_active": decision_count >= MINIMUM_EDITORIAL_DECISIONS,
             "performance_personalization_active": performance["active"],
             "performance_eligible_clip_count": performance["eligible_clip_count"],
             "performance_minimum_clip_count": performance["minimum_clip_count"],

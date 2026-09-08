@@ -41,3 +41,15 @@ reported generalization result credible to reviewers.
 The completed result is reported in
 [`external-holdout-v1-results.md`](external-holdout-v1-results.md). Frozen v1 is retained as the
 honest benchmark rather than refit in place.
+
+## Production serving release
+
+`models/serving_release_v1.json` freezes the complete production configuration around the ranker.
+It records the model artifact's canonical SHA-256 digest, encoder revision, publishability,
+reframing, and repurposing versions, and every personalization evidence threshold and adjustment
+cap. `creatorcut-verify-release` checks those values against both the artifact and the runtime
+constants. The web readiness probe performs the same check, and production inference refuses to
+run if the configured manifest does not verify.
+
+This does not prevent future improvement. A changed component requires a new immutable release
+manifest, and a changed global ranker additionally requires evaluation on untouched source videos.

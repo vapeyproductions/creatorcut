@@ -18,6 +18,7 @@ upload
   -> editorial + performance + semantic + source-retention adjustments
   -> diverse top-three selection
   -> preview / edit / subject-aware export / reject / custom alternative
+  -> transcript-grounded platform posts + exact copy feedback
   -> optional YouTube outcome import
 ```
 
@@ -49,6 +50,17 @@ paths and transcript embeddings private.
 
 The report deliberately labels the global ranker as frozen and shows inactive adaptation layers as
 waiting for evidence. A missing denominator stays unavailable; it is not rendered as zero success.
+It also exposes the verified serving-release ID, component versions, and model-artifact digest. A
+creator can download the same integrity-hashed feedback snapshot used at the offline-training
+boundary directly from the report.
+
+## Serving release integrity
+
+`models/serving_release_v1.json` is the production release contract. Readiness verifies the exact
+global-ranker SHA-256, ranker schema, publishability rules, reframing schema, repurposing algorithm,
+personalization evidence thresholds, and adjustment caps. Inference checks the contract again
+before using the frozen ranker. Editing a model artifact or policy constant in place therefore
+causes an explicit invalid release instead of an untracked behavior change.
 
 ## Publishability before quality
 
@@ -69,8 +81,8 @@ analysis does not mix face-tracked and fallback treatments unknowingly.
 ## Durable data contracts
 
 SQLite stores creator profiles, source-video jobs, clips, feedback events, audience-performance
-reports, and raw normalized analytics imports. Media, transcripts, experiment embeddings, and
-exports remain outside Git.
+reports, raw normalized analytics imports, repurposing packs, and exact copy choices. Media,
+transcripts, experiment embeddings, and exports remain outside Git.
 
 Each persisted clip records:
 

@@ -32,6 +32,7 @@ const elements = {
   closeModelReport: document.querySelector("#close-model-report"),
   modelReportIntro: document.querySelector("#model-report-intro"),
   modelReportError: document.querySelector("#model-report-error"),
+  downloadFeedback: document.querySelector("#download-feedback"),
   reportVideoCount: document.querySelector("#report-video-count"),
   reportPresentedCount: document.querySelector("#report-presented-count"),
   reportSelectedCount: document.querySelector("#report-selected-count"),
@@ -42,6 +43,7 @@ const elements = {
   reportPostFeedbackCount: document.querySelector("#report-post-feedback-count"),
   adaptationRows: document.querySelector("#adaptation-rows"),
   operationsList: document.querySelector("#operations-list"),
+  releaseList: document.querySelector("#release-list"),
   lineageBody: document.querySelector("#lineage-body"),
   adjustmentList: document.querySelector("#adjustment-list"),
   eventBody: document.querySelector("#event-body"),
@@ -194,7 +196,7 @@ function renderResults(video) {
   const summary = video.creator_summary;
   const editorial = summary.personalization_active
     ? `Editorial preference: active from ${summary.decision_count} prior clip decisions.`
-    : `Editorial preference: ${summary.decision_count}/3 decisions recorded.`;
+    : `Editorial preference: ${summary.decision_count}/${summary.editorial_minimum_decision_count} decisions recorded.`;
   const outcomes = summary.performance_personalization_active
     ? `Audience performance: active from ${summary.performance_eligible_clip_count} comparable Shorts.`
     : `Audience performance: ${summary.performance_eligible_clip_count}/${summary.performance_minimum_clip_count} comparable Shorts eligible.`;
@@ -783,7 +785,7 @@ function renderModelReport(report) {
   renderAdaptationRow(
     "Editorial",
     adaptation.personalization_active ? "ACTIVE" : "WAITING",
-    `${adaptation.decision_count} explicit decisions; activates at 3.`,
+    `${adaptation.decision_count} explicit decisions; activates at ${adaptation.editorial_minimum_decision_count}.`,
     "Maximum adjustment ±0.35.",
   );
   renderAdaptationRow(
@@ -832,6 +834,28 @@ function renderModelReport(report) {
     feedback.median_total_boundary_change_seconds === null
       ? "No edited downloads yet."
       : `${feedback.median_total_boundary_change_seconds.toFixed(1)} total seconds per edited selection.`,
+  );
+
+  const release = report.serving_release || { status: "unavailable" };
+  elements.releaseList.replaceChildren();
+  appendDefinition(elements.releaseList, "Release", release.release_id || "Not configured");
+  appendDefinition(elements.releaseList, "Status", release.status.toUpperCase());
+  appendDefinition(
+    elements.releaseList,
+    "Global ranker",
+    release.global_ranker_schema || "Unavailable",
+  );
+  appendDefinition(
+    elements.releaseList,
+    "Artifact SHA-256",
+    release.global_ranker_sha256 || "Unavailable",
+  );
+  appendDefinition(
+    elements.releaseList,
+    "Frozen components",
+    Object.entries(release.components || {})
+      .map(([name, version]) => `${name}: ${version}`)
+      .join(" · ") || "Unavailable",
   );
 
   elements.lineageBody.replaceChildren();
@@ -923,6 +947,40 @@ async function loadModelReport() {
 }
 
 elements.modelReportButton.addEventListener("click", loadModelReport);
+elements.downloadFeedback.addEventListener("click", async () => {
+  if (!state.creatorId) return;
+  elements.downloadFeedback.disabled = true;
+  elements.downloadFeedback.textContent = "PREPARING SNAPSHOT…";
+  try {
+    const response = await fetch(
+      `/api/creators/${encodeURIComponent(state.creatorId)}/feedback-export`,
+      { cache: "no-store" },
+    );
+    if (!response.ok) {
+      const value = await response.json();
+      throw new Error(value.error || "The snapshot could not be created.");
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "creatorcut-feedback-snapshot.json";
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    elements.modelReportIntro.textContent =
+      "Feedback snapshot downloaded with model lineage and an integrity hash.";
+  } catch (error) {
+    showError(
+      elements.modelReportError,
+      error.message || "The feedback snapshot could not be downloaded.",
+    );
+  } finally {
+    elements.downloadFeedback.disabled = false;
+    elements.downloadFeedback.textContent = "DOWNLOAD ML SNAPSHOT";
+  }
+});
 elements.closeModelReport.addEventListener("click", () => {
   if (state.video?.status === "ready") renderResults(state.video);
   else setView("upload");

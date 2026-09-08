@@ -61,6 +61,9 @@ def test_feedback_snapshot_preserves_lineage_labels_and_boundary_edits(tmp_path)
     assert summary["record_count"] == 1
     assert summary["labeled_record_count"] == 1
     assert summary["performance_record_count"] == 1
+    assert summary["model_versions"] == ["creatorcut_ranker_freeze_v1"]
+    assert summary["repurposing_feedback_count"] == 0
+    assert summary["repurposing_algorithm_versions"] == []
     assert len(summary["records_sha256"]) == 64
     assert record["ranking_model_version"] == "creatorcut_ranker_freeze_v1"
     assert record["editorial_label"] == "download_edited"

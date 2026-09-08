@@ -18,6 +18,7 @@ from urllib.parse import quote, unquote, urlparse
 
 from creatorcut.analytics import MAXIMUM_ANALYTICS_BYTES, parse_youtube_analytics_export
 from creatorcut.annotation_app import parse_byte_range
+from creatorcut.feedback_export import build_feedback_snapshot
 from creatorcut.product_pipeline import ProductProcessor, validate_export_interval
 from creatorcut.product_store import ProductStore
 from creatorcut.product_worker import ProcessingWorker
@@ -131,11 +132,22 @@ class ProductApplication:
         """Return serving readiness plus persistent queue counters."""
         database_ready = self.store.database_ready()
         model_ready = self.processor.frozen_model_path.is_file()
+        try:
+            release = self.processor.serving_release_status()
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            release = {"status": "invalid", "error": str(error)[:500]}
+        release_ready = release["status"] in {
+            "frozen",
+            "unmanaged_test_configuration",
+        }
         return {
-            "status": "ok" if database_ready and model_ready else "not_ready",
+            "status": (
+                "ok" if database_ready and model_ready and release_ready else "not_ready"
+            ),
             "service": "creatorcut-web",
             "database": "ok" if database_ready else "unavailable",
             "frozen_model": "ok" if model_ready else "missing",
+            "serving_release": release,
             "worker_mode": self.worker_mode,
             "queue": self.store.processing_queue_summary() if database_ready else None,
         }
@@ -200,7 +212,25 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                     path[len("/api/creators/") : -len("/model-report")]
                 ).strip("/")
                 try:
-                    self._send_json(application.store.creator_ml_report(creator_id))
+                    report = application.store.creator_ml_report(creator_id)
+                    report["serving_release"] = application.health()["serving_release"]
+                    self._send_json(report)
+                except KeyError:
+                    self._send_json({"error": "Creator not found"}, HTTPStatus.NOT_FOUND)
+                return
+            if path.startswith("/api/creators/") and path.endswith("/feedback-export"):
+                creator_id = unquote(
+                    path[len("/api/creators/") : -len("/feedback-export")]
+                ).strip("/")
+                try:
+                    snapshot = build_feedback_snapshot(application.store, creator_id)
+                    snapshot["serving_release"] = (
+                        application.processor.serving_release_status()
+                    )
+                    self._send_json(
+                        snapshot,
+                        download_name="creatorcut-feedback-snapshot.json",
+                    )
                 except KeyError:
                     self._send_json({"error": "Creator not found"}, HTTPStatus.NOT_FOUND)
                 return
@@ -489,13 +519,20 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
             return value
 
         def _send_json(
-            self, value: Any, status: HTTPStatus = HTTPStatus.OK
+            self,
+            value: Any,
+            status: HTTPStatus = HTTPStatus.OK,
+            download_name: str | None = None,
         ) -> None:
             payload = json.dumps(value, ensure_ascii=False).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))
             self.send_header("Cache-Control", "no-store")
+            if download_name:
+                self.send_header(
+                    "Content-Disposition", f'attachment; filename="{download_name}"'
+                )
             self.end_headers()
             self.wfile.write(payload)
 
@@ -563,6 +600,11 @@ def main() -> None:
     parser.add_argument(
         "--frozen-model", type=Path, default=Path("models/frozen_model_v1.json")
     )
+    parser.add_argument(
+        "--serving-release",
+        type=Path,
+        default=Path("models/serving_release_v1.json"),
+    )
     parser.add_argument("--model-cache", type=Path, default=Path("artifacts/models"))
     parser.add_argument("--semantic-cache", type=Path, default=Path("artifacts/huggingface"))
     parser.add_argument(
@@ -585,6 +627,7 @@ def main() -> None:
         args.frozen_model,
         args.model_cache,
         args.semantic_cache,
+        args.serving_release,
     )
     application = ProductApplication(store, processor, args.upload_dir, args.worker_mode)
     worker_stop = threading.Event()

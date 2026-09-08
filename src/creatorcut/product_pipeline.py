@@ -33,6 +33,7 @@ from creatorcut.semantic import (
     build_embedding_artifact,
     encode_texts_onnx,
 )
+from creatorcut.serving_release import validate_serving_release
 from creatorcut.training import candidate_model_features
 from creatorcut.transcription import transcribe_video
 
@@ -447,14 +448,33 @@ class ProductProcessor:
         frozen_model_path: Path,
         model_cache: Path,
         semantic_cache: Path,
+        serving_release_path: Path | None = None,
     ) -> None:
         self.store = store
         self.work_dir = work_dir
         self.frozen_model_path = frozen_model_path
         self.model_cache = model_cache
         self.semantic_cache = semantic_cache
+        self.serving_release_path = serving_release_path
         self._whisper_model: Any | None = None
         self._resource_lock = threading.Lock()
+
+    def serving_release_status(self) -> dict[str, Any]:
+        """Return verified serving lineage, or an explicit unmanaged test state."""
+        if self.serving_release_path is None:
+            return {"status": "unmanaged_test_configuration"}
+        return validate_serving_release(
+            self.serving_release_path, self.frozen_model_path
+        )
+
+    def require_frozen_serving_release(self) -> dict[str, Any]:
+        """Refuse production inference when the configured release does not verify."""
+        release = self.serving_release_status()
+        if release["status"] == "unmanaged_test_configuration":
+            return release
+        if release["status"] != "frozen":
+            raise ValueError("The configured serving release is not frozen")
+        return release
 
     def _transcriber(self) -> Any:
         with self._resource_lock:
@@ -471,6 +491,7 @@ class ProductProcessor:
 
     def ensure_clip_semantic_embedding(self, clip_id: str) -> None:
         """Backfill the frozen semantic representation for a previously ranked clip."""
+        self.require_frozen_serving_release()
         clip = self.store.get_clip(clip_id)
         if clip.get("semantic_embedding_json"):
             return
@@ -506,6 +527,7 @@ class ProductProcessor:
     def process_video(self, video_id: str) -> None:
         """Run validation, ASR, candidate generation, frozen scoring, and personalization."""
         try:
+            self.require_frozen_serving_release()
             source_path = self.store.media_path_for_video(video_id)
             self.store.update_video(video_id, "validating")
             media = inspect_media(source_path)
@@ -664,6 +686,7 @@ class ProductProcessor:
         self, video_id: str, start_seconds: float, end_seconds: float
     ) -> str:
         """Score and persist a creator-authored interval as explicit preference evidence."""
+        self.require_frozen_serving_release()
         video = self.store.get_video(video_id)
         if video["status"] != "ready" or not video.get("duration_seconds"):
             raise ValueError("The source video must finish processing first")

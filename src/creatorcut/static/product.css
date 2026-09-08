@@ -181,6 +181,44 @@ button:disabled {
   line-height: 1.5;
 }
 
+.system-details {
+  max-width: 650px;
+  margin-top: 22px;
+  padding-top: 12px;
+  border-top: 1px dotted #111;
+}
+
+.system-details summary {
+  cursor: pointer;
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+  font-weight: bold;
+  text-transform: uppercase;
+}
+
+.system-details dl {
+  margin: 12px 0 0;
+  font-family: "Courier New", monospace;
+  font-size: 11px;
+}
+
+.system-details dl div {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 12px;
+  padding: 7px 0;
+  border-top: 1px dotted #c5c2b8;
+}
+
+.system-details dt,
+.system-details dd {
+  margin: 0;
+}
+
+.system-details dt {
+  font-weight: bold;
+}
+
 .recent-section {
   max-width: 640px;
   margin-top: 34px;
@@ -360,6 +398,12 @@ progress::-moz-progress-bar {
   justify-content: space-between;
   align-items: end;
   gap: 20px;
+}
+
+.report-actions {
+  display: flex;
+  gap: 18px;
+  align-items: center;
 }
 
 .personalization-status {
@@ -776,7 +820,8 @@ footer p {
   }
 
   .adaptation-row,
-  .report-definition-list div {
+  .report-definition-list div,
+  .system-details dl div {
     grid-template-columns: 1fr;
     gap: 5px;
   }

@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>CreatorCut — find three clips</title>
+    <title>CreatorCut — ranked clips that improve with evidence</title>
     <meta
       name="description"
-      content="Upload a long video and receive three ranked short-form clip recommendations."
+      content="Upload a long video, receive three explainable short-form clips, and turn creator choices and audience outcomes into controlled personalization."
     />
     <link rel="stylesheet" href="/assets/product.css" />
   </head>
@@ -14,7 +14,7 @@
     <header class="masthead">
       <div>
         <strong>CREATORCUT</strong>
-        <span>LOCAL TEST BUILD</span>
+        <span>FROZEN RELEASE V1</span>
       </div>
       <div class="masthead-actions">
         <p>One long video in. Three ranked clips out.</p>
@@ -63,6 +63,15 @@
           already been published, its YouTube retention export can inform the ranking when the
           report has enough traffic.
         </p>
+        <details class="system-details">
+          <summary>How the ML system is controlled</summary>
+          <dl>
+            <div><dt>Global ranker</dt><dd>Frozen and integrity-checked before inference.</dd></div>
+            <div><dt>Creator learning</dt><dd>Starts only after explicit clip decisions.</dd></div>
+            <div><dt>Audience learning</dt><dd>Starts only after enough comparable, sufficiently viewed Shorts.</dd></div>
+            <div><dt>Promotion</dt><dd>A new global model requires evaluation on untouched videos.</dd></div>
+          </dl>
+        </details>
         <section id="recent-section" class="recent-section" hidden>
           <h2>Recent runs</h2>
           <ul id="recent-videos"></ul>
@@ -139,7 +148,10 @@
             <p class="section-number">04 / ML OPERATIONS</p>
             <h2 id="model-report-title">Model &amp; feedback report</h2>
           </div>
-          <button id="close-model-report" class="plain-button" type="button">BACK</button>
+          <div class="report-actions">
+            <button id="download-feedback" class="plain-button" type="button">DOWNLOAD ML SNAPSHOT</button>
+            <button id="close-model-report" class="plain-button" type="button">BACK</button>
+          </div>
         </div>
         <p id="model-report-intro" class="personalization-status">Loading report…</p>
         <p id="model-report-error" class="error report-error" role="alert" hidden></p>
@@ -167,6 +179,15 @@
         <section class="report-block" aria-labelledby="operations-title">
           <h3 id="operations-title">Serving reliability</h3>
           <dl id="operations-list" class="report-definition-list"></dl>
+        </section>
+
+        <section class="report-block" aria-labelledby="release-title">
+          <h3 id="release-title">Frozen serving release</h3>
+          <dl id="release-list" class="report-definition-list"></dl>
+          <p class="small-print">
+            Readiness fails if the model artifact or a versioned serving component no longer
+            matches this release.
+          </p>
         </section>
 
         <section class="report-block" aria-labelledby="lineage-title">
@@ -301,8 +322,9 @@
     <footer>
       <p><strong>How feedback is used</strong></p>
       <p>
-        Downloads, rejections, and timestamp changes inform creator preferences. Audience outcomes
-        use a separate, exposure-gated layer. Raw views never become the clip-quality label.
+        Downloads, rejections, timestamp changes, custom clips, and post-copy edits remain distinct
+        feedback signals. Audience outcomes use a separate, exposure-gated layer. Raw views never
+        become the clip-quality label.
       </p>
     </footer>
 
