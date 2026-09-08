@@ -8,6 +8,7 @@ import re
 import sqlite3
 import threading
 import uuid
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from statistics import median
@@ -102,6 +103,40 @@ def preference_features(clip: dict[str, Any]) -> list[float]:
         (float(targets.get(field, 3.0)) - 3.0) / 2.0
         for field in ("hook", "completeness", "payoff", "clarity")
     ] + [(float(clip["duration_seconds"]) - 40.0) / 20.0]
+
+
+def numeric_summary(values: list[float]) -> dict[str, float | int | None]:
+    """Summarize a numeric operational signal without inventing empty values."""
+    clean = sorted(float(value) for value in values if math.isfinite(float(value)))
+    if not clean:
+        return {
+            "count": 0,
+            "minimum": None,
+            "p25": None,
+            "median": None,
+            "mean": None,
+            "p75": None,
+            "maximum": None,
+        }
+
+    def percentile(fraction: float) -> float:
+        position = (len(clean) - 1) * fraction
+        lower = int(math.floor(position))
+        upper = int(math.ceil(position))
+        if lower == upper:
+            return clean[lower]
+        weight = position - lower
+        return clean[lower] * (1 - weight) + clean[upper] * weight
+
+    return {
+        "count": len(clean),
+        "minimum": round(clean[0], 3),
+        "p25": round(percentile(0.25), 3),
+        "median": round(percentile(0.5), 3),
+        "mean": round(sum(clean) / len(clean), 3),
+        "p75": round(percentile(0.75), 3),
+        "maximum": round(clean[-1], 3),
+    }
 
 
 class ProductStore:
@@ -1173,6 +1208,300 @@ class ProductStore:
                 "frozen": True,
                 "production_feedback_auto_trains_global_model": False,
                 "promotion_requires_unseen_video_evaluation": True,
+            },
+        }
+
+    def admin_ml_report(self) -> dict[str, Any]:
+        """Aggregate privacy-conscious serving and feedback signals across creators."""
+        with self._connect() as connection:
+            creators = connection.execute(
+                """
+                SELECT id, display_name, created_at FROM creator_profiles
+                ORDER BY created_at, id
+                """
+            ).fetchall()
+            videos = connection.execute(
+                """
+                SELECT id, creator_id, original_filename, status, duration_seconds
+                FROM videos ORDER BY created_at, id
+                """
+            ).fetchall()
+            clips = connection.execute(
+                """
+                SELECT clips.id, videos.creator_id, clips.rank, clips.origin,
+                       clips.duration_seconds, clips.global_score,
+                       clips.personalized_score
+                FROM clips JOIN videos ON videos.id = clips.video_id
+                ORDER BY clips.created_at, clips.id
+                """
+            ).fetchall()
+            events = connection.execute(
+                """
+                SELECT feedback_events.creator_id, feedback_events.clip_id,
+                       feedback_events.event_type, feedback_events.start_seconds,
+                       feedback_events.end_seconds, feedback_events.payload_json,
+                       clips.rank, clips.origin,
+                       clips.start_seconds AS proposed_start,
+                       clips.end_seconds AS proposed_end
+                FROM feedback_events
+                JOIN clips ON clips.id = feedback_events.clip_id
+                ORDER BY feedback_events.id
+                """
+            ).fetchall()
+            analytics = connection.execute(
+                """
+                SELECT creator_id, report_role, original_filename, report_json,
+                       recognized_row_count
+                FROM analytics_imports ORDER BY created_at, id
+                """
+            ).fetchall()
+            performance = connection.execute(
+                "SELECT * FROM performance_reports ORDER BY id"
+            ).fetchall()
+            jobs = connection.execute(
+                "SELECT status, attempt_count FROM processing_jobs ORDER BY id"
+            ).fetchall()
+            repurposing = connection.execute(
+                """
+                SELECT creator_id, action, platform FROM repurposing_feedback
+                ORDER BY id
+                """
+            ).fetchall()
+
+        accounts: dict[str, dict[str, Any]] = {
+            row["id"]: {
+                "creator_id": row["id"],
+                "display_name": row["display_name"],
+                "created_at": row["created_at"],
+                "video_count": 0,
+                "model_clip_count": 0,
+                "custom_clip_count": 0,
+                "presented_clip_ids": set(),
+                "selected_clip_ids": set(),
+                "rejected_clip_ids": set(),
+                "edited_download_count": 0,
+                "total_boundary_changes": [],
+                "analytics_import_count": 0,
+                "performance_report_count": 0,
+                "repurposing_feedback_count": 0,
+            }
+            for row in creators
+        }
+        source_extensions: Counter[str] = Counter()
+        video_statuses: Counter[str] = Counter()
+        source_durations: list[float] = []
+        for row in videos:
+            accounts[row["creator_id"]]["video_count"] += 1
+            suffix = Path(row["original_filename"]).suffix.casefold() or "no_extension"
+            source_extensions[suffix] += 1
+            video_statuses[row["status"]] += 1
+            if row["duration_seconds"] is not None:
+                source_durations.append(float(row["duration_seconds"]))
+
+        clip_origins: Counter[str] = Counter()
+        clip_durations: list[float] = []
+        global_scores: list[float] = []
+        personalized_scores: list[float] = []
+        for row in clips:
+            account = accounts[row["creator_id"]]
+            key = "custom_clip_count" if row["origin"] == "creator" else "model_clip_count"
+            account[key] += 1
+            clip_origins[row["origin"]] += 1
+            clip_durations.append(float(row["duration_seconds"]))
+            global_scores.append(float(row["global_score"]))
+            personalized_scores.append(float(row["personalized_score"]))
+
+        presented_by_rank: dict[int, set[str]] = {}
+        selected_by_rank: dict[int, set[str]] = {}
+        event_counts: Counter[str] = Counter()
+        export_formats: Counter[str] = Counter()
+        total_boundary_changes: list[float] = []
+        start_boundary_changes: list[float] = []
+        end_boundary_changes: list[float] = []
+        for row in events:
+            account = accounts[row["creator_id"]]
+            event_type = row["event_type"]
+            event_counts[event_type] += 1
+            if row["origin"] == "model" and event_type == "presented":
+                account["presented_clip_ids"].add(row["clip_id"])
+                presented_by_rank.setdefault(int(row["rank"]), set()).add(row["clip_id"])
+            if row["origin"] == "model" and event_type in {
+                "download_original",
+                "download_edited",
+            }:
+                account["selected_clip_ids"].add(row["clip_id"])
+                selected_by_rank.setdefault(int(row["rank"]), set()).add(row["clip_id"])
+            if row["origin"] == "model" and event_type == "reject":
+                account["rejected_clip_ids"].add(row["clip_id"])
+            payload = json.loads(row["payload_json"])
+            export_format = payload.get("export_format")
+            if isinstance(export_format, str):
+                export_formats[export_format] += 1
+            if event_type == "download_edited":
+                start_change = abs(float(row["start_seconds"]) - float(row["proposed_start"]))
+                end_change = abs(float(row["end_seconds"]) - float(row["proposed_end"]))
+                total_change = start_change + end_change
+                account["edited_download_count"] += 1
+                account["total_boundary_changes"].append(total_change)
+                start_boundary_changes.append(start_change)
+                end_boundary_changes.append(end_change)
+                total_boundary_changes.append(total_change)
+
+        analytics_extensions: Counter[str] = Counter()
+        analytics_roles: Counter[str] = Counter()
+        analytics_report_types: Counter[str] = Counter()
+        analytics_metric_coverage: Counter[str] = Counter()
+        retention_point_counts: list[float] = []
+        recognized_analytics_rows = 0
+        for row in analytics:
+            accounts[row["creator_id"]]["analytics_import_count"] += 1
+            analytics_extensions[
+                Path(row["original_filename"]).suffix.casefold() or "no_extension"
+            ] += 1
+            analytics_roles[row["report_role"]] += 1
+            recognized_analytics_rows += int(row["recognized_row_count"])
+            report = json.loads(row["report_json"])
+            for report_type in report.get("report_types", []):
+                analytics_report_types[str(report_type)] += 1
+            for metric in report.get("totals", {}):
+                analytics_metric_coverage[str(metric)] += 1
+            retention_point_counts.append(len(report.get("retention_rows", [])))
+
+        performance_metric_fields = (
+            "views",
+            "engaged_views",
+            "watch_time_hours",
+            "average_view_duration_seconds",
+            "average_view_percentage",
+            "likes",
+            "comments",
+            "shares",
+            "subscribers_net",
+            "shown_in_feed",
+            "chose_to_view_percentage",
+            "thumbnail_impressions",
+            "thumbnail_ctr",
+        )
+        performance_metric_coverage: Counter[str] = Counter()
+        for row in performance:
+            accounts[row["creator_id"]]["performance_report_count"] += 1
+            for field in performance_metric_fields:
+                if row[field] is not None:
+                    performance_metric_coverage[field] += 1
+        repurposing_actions: Counter[str] = Counter()
+        repurposing_platforms: Counter[str] = Counter()
+        for row in repurposing:
+            accounts[row["creator_id"]]["repurposing_feedback_count"] += 1
+            repurposing_actions[row["action"]] += 1
+            repurposing_platforms[row["platform"]] += 1
+
+        account_rows: list[dict[str, Any]] = []
+        for account in accounts.values():
+            presented_count = len(account.pop("presented_clip_ids"))
+            selected_count = len(account.pop("selected_clip_ids"))
+            rejected_count = len(account.pop("rejected_clip_ids"))
+            edit_values = account.pop("total_boundary_changes")
+            account_rows.append(
+                {
+                    **account,
+                    "presented_model_clip_count": presented_count,
+                    "selected_model_clip_count": selected_count,
+                    "rejected_model_clip_count": rejected_count,
+                    "selection_rate": round(selected_count / presented_count, 4)
+                    if presented_count
+                    else None,
+                    "median_total_boundary_change_seconds": (
+                        numeric_summary(edit_values)["median"]
+                    ),
+                }
+            )
+
+        total_presented = sum(row["presented_model_clip_count"] for row in account_rows)
+        total_selected = sum(row["selected_model_clip_count"] for row in account_rows)
+        rank_performance = []
+        for rank in sorted(set(presented_by_rank) | set(selected_by_rank)):
+            presented_count = len(presented_by_rank.get(rank, set()))
+            selected_count = len(selected_by_rank.get(rank, set()))
+            rank_performance.append(
+                {
+                    "rank": rank,
+                    "presented": presented_count,
+                    "selected": selected_count,
+                    "selection_rate": round(selected_count / presented_count, 4)
+                    if presented_count
+                    else None,
+                }
+            )
+        return {
+            "schema": "creatorcut_admin_ml_observatory_v1",
+            "generated_at": utc_now(),
+            "scope": {
+                "creator_account_count": len(account_rows),
+                "source_video_count": len(videos),
+                "clip_count": len(clips),
+            },
+            "model_behavior": {
+                "presented_model_clip_count": total_presented,
+                "selected_model_clip_count": total_selected,
+                "selection_rate": round(total_selected / total_presented, 4)
+                if total_presented
+                else None,
+                "event_counts": dict(sorted(event_counts.items())),
+                "selection_by_display_rank": rank_performance,
+                "global_score_distribution": numeric_summary(global_scores),
+                "personalized_score_distribution": numeric_summary(personalized_scores),
+            },
+            "media": {
+                "source_file_types": dict(sorted(source_extensions.items())),
+                "video_status_counts": dict(sorted(video_statuses.items())),
+                "source_duration_seconds": numeric_summary(source_durations),
+                "clip_origins": dict(sorted(clip_origins.items())),
+                "clip_duration_seconds": numeric_summary(clip_durations),
+                "export_format_counts": dict(sorted(export_formats.items())),
+            },
+            "editing": {
+                "edited_download_count": len(total_boundary_changes),
+                "absolute_start_change_seconds": numeric_summary(start_boundary_changes),
+                "absolute_end_change_seconds": numeric_summary(end_boundary_changes),
+                "total_boundary_change_seconds": numeric_summary(total_boundary_changes),
+            },
+            "analytics": {
+                "import_count": len(analytics),
+                "file_types": dict(sorted(analytics_extensions.items())),
+                "report_roles": dict(sorted(analytics_roles.items())),
+                "report_types": dict(sorted(analytics_report_types.items())),
+                "recognized_row_count": recognized_analytics_rows,
+                "metric_coverage": dict(sorted(analytics_metric_coverage.items())),
+                "retention_points_per_import": numeric_summary(retention_point_counts),
+                "performance_report_count": len(performance),
+                "performance_metric_coverage": dict(
+                    sorted(performance_metric_coverage.items())
+                ),
+            },
+            "repurposing": {
+                "feedback_count": len(repurposing),
+                "action_counts": dict(sorted(repurposing_actions.items())),
+                "platform_counts": dict(sorted(repurposing_platforms.items())),
+            },
+            "operations": {
+                "job_status_counts": dict(
+                    sorted(Counter(row["status"] for row in jobs).items())
+                ),
+                "job_attempt_distribution": numeric_summary(
+                    [float(row["attempt_count"]) for row in jobs]
+                ),
+            },
+            "accounts": account_rows,
+            "interpretation": {
+                "selection_rate": (
+                    "An explicit product-choice signal, not ground-truth model accuracy."
+                ),
+                "analytics": (
+                    "Coverage shows which fields were available; missing metrics remain missing."
+                ),
+                "privacy": (
+                    "This aggregate omits transcript text, media paths, and raw analytics rows."
+                ),
             },
         }
 

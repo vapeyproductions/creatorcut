@@ -15,6 +15,19 @@
     "reframing": "creatorcut_reframing_v1",
     "repurposing": "creatorcut_extractive_repurposing_v1"
   },
+  "evaluation_evidence": {
+    "external_holdout_v1": {
+      "status": "reported_before_any_retraining",
+      "frozen_model_sha256": "0752f38fc2821070f81f17f93ebcf36123c6eefb06cf5b5a6d56c6d164c1fedf",
+      "video_count": 16,
+      "clip_count": 96,
+      "pairwise_accuracy": 0.5876777251184834,
+      "top_1_hit_rate": 0.4375,
+      "mean_top_1_regret": 0.828125,
+      "top_3_hit_rate": 0.8125,
+      "mean_top_3_regret": 0.21875
+    }
+  },
   "personalization_policy": {
     "minimum_editorial_decisions": 3,
     "maximum_editorial_adjustment": 0.35,

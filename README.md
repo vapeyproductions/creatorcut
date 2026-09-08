@@ -59,6 +59,17 @@ Run the local product website:
 creatorcut-web
 ```
 
+Enable the separate local cross-account ML observatory when administering the system:
+
+```bash
+creatorcut-web --enable-admin-dashboard
+```
+
+The product then links to `/admin`, where offline holdout evidence is shown separately from live
+selection, rank, clip-length, boundary-edit, input-format, YouTube analytics-coverage, account, and
+job-state signals. It is disabled by default because the current build has no administrator
+authentication. See [docs/admin-ml-observatory.md](docs/admin-ml-observatory.md).
+
 That command starts the web process plus a durable embedded worker for convenient local use. The
 upload itself and its processing job are both committed to SQLite before the request returns. Jobs
 use expiring leases, heartbeats, bounded retries, and persisted errors, so a stopped worker can

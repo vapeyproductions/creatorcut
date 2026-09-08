@@ -79,11 +79,13 @@ class ProductApplication:
         processor: ProductProcessor,
         upload_dir: Path,
         worker_mode: str = "external",
+        admin_dashboard_enabled: bool = False,
     ) -> None:
         self.store = store
         self.processor = processor
         self.upload_dir = upload_dir
         self.worker_mode = worker_mode
+        self.admin_dashboard_enabled = admin_dashboard_enabled
         self.upload_dir.mkdir(parents=True, exist_ok=True)
 
     def accept_upload(
@@ -170,6 +172,37 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                 return
             if path == "/assets/product.js":
                 self._send_file(STATIC_DIRECTORY / "product.js")
+                return
+            if path == "/api/config":
+                self._send_json(
+                    {"admin_dashboard_enabled": application.admin_dashboard_enabled}
+                )
+                return
+            if path == "/admin":
+                if not application.admin_dashboard_enabled:
+                    self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+                    return
+                self._send_file(STATIC_DIRECTORY / "admin.html")
+                return
+            if path == "/assets/admin.css":
+                if not application.admin_dashboard_enabled:
+                    self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+                    return
+                self._send_file(STATIC_DIRECTORY / "admin.css")
+                return
+            if path == "/assets/admin.js":
+                if not application.admin_dashboard_enabled:
+                    self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+                    return
+                self._send_file(STATIC_DIRECTORY / "admin.js")
+                return
+            if path == "/api/admin/model-report":
+                if not application.admin_dashboard_enabled:
+                    self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+                    return
+                report = application.store.admin_ml_report()
+                report["serving_release"] = application.health()["serving_release"]
+                self._send_json(report)
                 return
             if path == "/api/health/live":
                 self._send_json({"status": "ok", "service": "creatorcut-web"})
@@ -617,7 +650,20 @@ def main() -> None:
     parser.add_argument("--lease-seconds", type=float, default=120.0)
     parser.add_argument("--poll-seconds", type=float, default=1.0)
     parser.add_argument("--log-level", default="INFO")
+    parser.add_argument(
+        "--enable-admin-dashboard",
+        action="store_true",
+        help="Expose the local cross-account ML observatory. Keep disabled on public hosts.",
+    )
     args = parser.parse_args()
+    if args.enable_admin_dashboard and args.host not in {
+        "127.0.0.1",
+        "localhost",
+        "::1",
+    }:
+        parser.error(
+            "The unauthenticated admin dashboard may only bind to a loopback host"
+        )
 
     configure_logging(args.log_level)
     store = ProductStore(args.database)
@@ -629,7 +675,13 @@ def main() -> None:
         args.semantic_cache,
         args.serving_release,
     )
-    application = ProductApplication(store, processor, args.upload_dir, args.worker_mode)
+    application = ProductApplication(
+        store,
+        processor,
+        args.upload_dir,
+        args.worker_mode,
+        args.enable_admin_dashboard,
+    )
     worker_stop = threading.Event()
     worker_thread = None
     if args.worker_mode == "embedded":

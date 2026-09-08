@@ -120,6 +120,73 @@ def test_ml_report_exposes_lineage_labels_edits_and_job_state(tmp_path):
     assert report["global_model_policy"]["production_feedback_auto_trains_global_model"] is False
 
 
+def test_admin_observatory_aggregates_accounts_media_edits_and_analytics(tmp_path):
+    store, creator, video, clips = populated_store(tmp_path)
+    store.record_editorial_event(
+        clips[0]["id"],
+        "download_edited",
+        11.0,
+        39.0,
+        {"export_format": "vertical_captions"},
+    )
+    store.record_editorial_event(
+        clips[1]["id"],
+        "reject",
+        clips[1]["start_seconds"],
+        clips[1]["end_seconds"],
+    )
+    store.save_analytics_import(
+        creator["id"],
+        "source-report.zip",
+        "source_video",
+        {
+            "schema_version": 1,
+            "source": "youtube_studio_export",
+            "source_files": ["Table data.csv"],
+            "totals": {"views": 500, "average_view_percentage": 72.0},
+            "report_rows": [],
+            "retention_rows": [
+                {"elapsed_video_time_ratio": 0.0, "audience_watch_ratio": 1.0},
+                {"elapsed_video_time_ratio": 1.0, "audience_watch_ratio": 0.4},
+            ],
+            "report_types": ["summary", "audience_retention"],
+            "recognized_row_count": 5,
+            "warnings": [],
+        },
+        video_id=video["id"],
+    )
+
+    report = store.admin_ml_report()
+
+    assert report["scope"] == {
+        "creator_account_count": 1,
+        "source_video_count": 1,
+        "clip_count": 3,
+    }
+    assert report["model_behavior"]["presented_model_clip_count"] == 3
+    assert report["model_behavior"]["selected_model_clip_count"] == 1
+    assert report["model_behavior"]["selection_rate"] == pytest.approx(1 / 3, abs=0.0001)
+    assert report["model_behavior"]["selection_by_display_rank"][0] == {
+        "rank": 1,
+        "presented": 1,
+        "selected": 1,
+        "selection_rate": 1.0,
+    }
+    assert report["media"]["source_file_types"] == {".mp4": 1}
+    assert report["media"]["clip_duration_seconds"]["median"] == 30.0
+    assert report["media"]["export_format_counts"] == {"vertical_captions": 1}
+    assert report["editing"]["total_boundary_change_seconds"]["median"] == 2.0
+    assert report["analytics"]["import_count"] == 1
+    assert report["analytics"]["report_roles"] == {"source_video": 1}
+    assert report["analytics"]["metric_coverage"] == {
+        "average_view_percentage": 1,
+        "views": 1,
+    }
+    assert report["analytics"]["retention_points_per_import"]["median"] == 2.0
+    assert report["accounts"][0]["creator_id"] == creator["id"]
+    assert "transcript_text" not in json.dumps(report)
+
+
 def test_store_can_backfill_a_legacy_clip_embedding(tmp_path):
     store, _, _, clips = populated_store(tmp_path)
 

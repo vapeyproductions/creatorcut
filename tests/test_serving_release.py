@@ -16,6 +16,9 @@ def test_committed_serving_release_verifies_exact_runtime():
     assert release["status"] == "frozen"
     assert len(release["global_ranker_sha256"]) == 64
     assert release["components"]["publishability"].endswith("_v1")
+    assert release["evaluation_evidence"]["external_holdout_v1"][
+        "top_3_hit_rate"
+    ] == 0.8125
 
 
 def test_serving_release_detects_a_changed_model_artifact(tmp_path):

@@ -160,16 +160,24 @@ button:disabled {
   background: #111;
 }
 
-.plain-button {
+.plain-button,
+.plain-link {
   min-height: auto;
   padding: 2px 0;
   border: 0;
   border-bottom: 1px solid currentColor;
   background: transparent;
+  color: inherit;
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+  font-weight: bold;
+  text-decoration: none;
 }
 
 .plain-button:hover:not(:disabled),
-.plain-button:focus-visible {
+.plain-button:focus-visible,
+.plain-link:hover,
+.plain-link:focus-visible {
   color: #111;
   background: transparent;
   border-bottom-width: 2px;

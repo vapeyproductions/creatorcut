@@ -98,6 +98,14 @@ def validate_serving_release(
     }
     for field, expected in expected_policy.items():
         _expect(errors, f"personalization policy {field}", policy.get(field), expected)
+    evaluation_evidence = manifest.get("evaluation_evidence", {})
+    external_holdout = evaluation_evidence.get("external_holdout_v1", {})
+    _expect(
+        errors,
+        "external holdout model digest",
+        external_holdout.get("frozen_model_sha256"),
+        global_ranker.get("canonical_sha256"),
+    )
     if errors:
         raise ValueError("Serving release validation failed: " + "; ".join(errors))
     return {
@@ -107,6 +115,7 @@ def validate_serving_release(
         "global_ranker_schema": global_ranker["freeze_schema"],
         "global_ranker_sha256": global_ranker["canonical_sha256"],
         "components": components,
+        "evaluation_evidence": evaluation_evidence,
     }
 
 

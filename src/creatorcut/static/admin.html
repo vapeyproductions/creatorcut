@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CreatorCut — ML observatory</title>
+    <meta
+      name="description"
+      content="Local cross-account monitoring for CreatorCut model behavior, data coverage, edits, and analytics imports."
+    />
+    <link rel="stylesheet" href="/assets/admin.css" />
+  </head>
+  <body>
+    <header class="masthead">
+      <div><strong>CREATORCUT</strong><span>ML OBSERVATORY</span></div>
+      <nav><a href="/">BACK TO PRODUCT</a><button id="refresh" type="button">REFRESH</button></nav>
+    </header>
+
+    <main>
+      <section class="intro">
+        <p class="section-label">LOCAL ADMIN VIEW / ALL CREATOR ACCOUNTS</p>
+        <h1>Model behavior and data coverage</h1>
+        <p id="report-status" class="notice" role="status">Loading operational evidence…</p>
+        <p id="report-error" class="error" role="alert" hidden></p>
+      </section>
+
+      <section aria-labelledby="offline-title">
+        <div class="section-heading">
+          <div><p class="section-label">01 / CONTROLLED EVALUATION</p><h2 id="offline-title">Untouched-video results</h2></div>
+          <p>These are frozen offline metrics—not user behavior.</p>
+        </div>
+        <div class="metric-grid offline-grid">
+          <article><strong id="offline-pairwise">—</strong><span>pairwise accuracy</span></article>
+          <article><strong id="offline-top-one">—</strong><span>top-1 hit rate</span></article>
+          <article><strong id="offline-regret">—</strong><span>mean top-1 regret</span></article>
+          <article><strong id="offline-top-three">—</strong><span>top-3 hit rate</span></article>
+        </div>
+        <dl id="release-details" class="definition-list"></dl>
+      </section>
+
+      <section aria-labelledby="online-title">
+        <div class="section-heading">
+          <div><p class="section-label">02 / LIVE PRODUCT SIGNALS</p><h2 id="online-title">Across-account activity</h2></div>
+          <p>Selection is preference evidence, not ground-truth accuracy.</p>
+        </div>
+        <div class="metric-grid">
+          <article><strong id="account-count">0</strong><span>creator accounts</span></article>
+          <article><strong id="video-count">0</strong><span>source videos</span></article>
+          <article><strong id="clip-count">0</strong><span>saved clips</span></article>
+          <article><strong id="presented-count">0</strong><span>model clips presented</span></article>
+          <article><strong id="selected-count">0</strong><span>model clips selected</span></article>
+          <article><strong id="selection-rate">—</strong><span>selection rate</span></article>
+          <article><strong id="edit-count">0</strong><span>edited downloads</span></article>
+          <article><strong id="analytics-count">0</strong><span>analytics imports</span></article>
+        </div>
+
+        <div class="two-column">
+          <article class="panel">
+            <h3>Selection by displayed rank</h3>
+            <table>
+              <thead><tr><th>Rank</th><th>Presented</th><th>Selected</th><th>Rate</th></tr></thead>
+              <tbody id="rank-body"></tbody>
+            </table>
+          </article>
+          <article class="panel">
+            <h3>Editorial event types</h3>
+            <dl id="event-counts" class="count-list"></dl>
+          </article>
+        </div>
+      </section>
+
+      <section aria-labelledby="media-title">
+        <div class="section-heading">
+          <div><p class="section-label">03 / INPUT SHAPE</p><h2 id="media-title">Media and clip lengths</h2></div>
+          <p>Only aggregate formats and durations are shown.</p>
+        </div>
+        <div class="two-column">
+          <article class="panel"><h3>Source file types</h3><dl id="source-types" class="count-list"></dl></article>
+          <article class="panel"><h3>Clip origins</h3><dl id="clip-origins" class="count-list"></dl></article>
+          <article class="panel"><h3>Source duration</h3><dl id="source-duration" class="definition-list"></dl></article>
+          <article class="panel"><h3>Proposed clip duration</h3><dl id="clip-duration" class="definition-list"></dl></article>
+          <article class="panel"><h3>Downloaded formats</h3><dl id="export-formats" class="count-list"></dl></article>
+          <article class="panel"><h3>Video processing states</h3><dl id="video-statuses" class="count-list"></dl></article>
+        </div>
+      </section>
+
+      <section aria-labelledby="editing-title">
+        <div class="section-heading">
+          <div><p class="section-label">04 / HUMAN CORRECTIONS</p><h2 id="editing-title">Boundary editing</h2></div>
+          <p>Absolute changes show how far users moved model boundaries.</p>
+        </div>
+        <div class="three-column">
+          <article class="panel"><h3>Start changes</h3><dl id="start-edits" class="definition-list"></dl></article>
+          <article class="panel"><h3>End changes</h3><dl id="end-edits" class="definition-list"></dl></article>
+          <article class="panel"><h3>Total changes</h3><dl id="total-edits" class="definition-list"></dl></article>
+        </div>
+      </section>
+
+      <section aria-labelledby="analytics-title">
+        <div class="section-heading">
+          <div><p class="section-label">05 / YOUTUBE EVIDENCE</p><h2 id="analytics-title">Analytics coverage</h2></div>
+          <p>Coverage counts reports containing a field; missing values stay missing.</p>
+        </div>
+        <div class="two-column">
+          <article class="panel"><h3>Report roles</h3><dl id="analytics-roles" class="count-list"></dl></article>
+          <article class="panel"><h3>Report types</h3><dl id="analytics-types" class="count-list"></dl></article>
+          <article class="panel"><h3>Uploaded file types</h3><dl id="analytics-files" class="count-list"></dl></article>
+          <article class="panel"><h3>Parsed analytics fields</h3><dl id="analytics-metrics" class="count-list"></dl></article>
+          <article class="panel"><h3>Outcome fields saved for clips</h3><dl id="performance-metrics" class="count-list"></dl></article>
+          <article class="panel"><h3>Retention points per import</h3><dl id="retention-points" class="definition-list"></dl></article>
+        </div>
+      </section>
+
+      <section aria-labelledby="accounts-title">
+        <div class="section-heading">
+          <div><p class="section-label">06 / ACCOUNT COVERAGE</p><h2 id="accounts-title">Creator accounts</h2></div>
+          <p>Local profile names and aggregate counts only.</p>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr><th>Account</th><th>Videos</th><th>Model clips</th><th>Selected</th><th>Rate</th><th>Custom</th><th>Edits</th><th>Median edit</th><th>Analytics</th><th>Outcomes</th></tr>
+            </thead>
+            <tbody id="account-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section aria-labelledby="ops-title">
+        <div class="section-heading">
+          <div><p class="section-label">07 / OPERATIONS</p><h2 id="ops-title">Pipeline health</h2></div>
+          <p>Persistent job state and retry evidence.</p>
+        </div>
+        <div class="two-column">
+          <article class="panel"><h3>Job states</h3><dl id="job-statuses" class="count-list"></dl></article>
+          <article class="panel"><h3>Job attempts</h3><dl id="job-attempts" class="definition-list"></dl></article>
+          <article class="panel"><h3>Post-copy feedback</h3><dl id="post-actions" class="count-list"></dl></article>
+          <article class="panel"><h3>Post platforms</h3><dl id="post-platforms" class="count-list"></dl></article>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      This view intentionally omits transcript text, local media paths, and raw analytics rows.
+      A public deployment must place it behind administrator authentication.
+    </footer>
+    <script src="/assets/admin.js" defer></script>
+  </body>
+</html>

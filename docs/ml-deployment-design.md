@@ -54,6 +54,12 @@ It also exposes the verified serving-release ID, component versions, and model-a
 creator can download the same integrity-hashed feedback snapshot used at the offline-training
 boundary directly from the report.
 
+An opt-in local administrator observatory aggregates model impressions, choices by displayed rank,
+clip/source duration distributions, boundary corrections, file and export formats, analytics-field
+coverage, processing jobs, and per-account denominators. It keeps frozen offline evaluation
+separate from live behavioral signals and omits transcripts, media paths, and raw analytics rows.
+The route is disabled by default because a public version requires administrator authentication.
+
 ## Serving release integrity
 
 `models/serving_release_v1.json` is the production release contract. Readiness verifies the exact

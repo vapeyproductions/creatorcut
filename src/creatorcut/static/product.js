@@ -28,6 +28,7 @@ const elements = {
   processingProgress: document.querySelector("#processing-progress"),
   resultsSection: document.querySelector("#results-section"),
   modelReportSection: document.querySelector("#model-report-section"),
+  adminLink: document.querySelector("#admin-link"),
   modelReportButton: document.querySelector("#model-report-button"),
   closeModelReport: document.querySelector("#close-model-report"),
   modelReportIntro: document.querySelector("#model-report-intro"),
@@ -82,6 +83,15 @@ async function request(url, options = {}) {
   const value = await response.json();
   if (!response.ok) throw new Error(value.error || `Request failed (${response.status}).`);
   return value;
+}
+
+async function loadConfiguration() {
+  try {
+    const configuration = await request("/api/config");
+    elements.adminLink.hidden = !configuration.admin_dashboard_enabled;
+  } catch (_error) {
+    elements.adminLink.hidden = true;
+  }
 }
 
 function setView(name) {
@@ -1054,4 +1064,15 @@ async function loadRecentVideos() {
   }
 }
 
+async function loadProductConfiguration() {
+  try {
+    const configuration = await request("/api/config");
+    elements.adminLink.hidden = !configuration.admin_dashboard_enabled;
+  } catch (_error) {
+    elements.adminLink.hidden = true;
+  }
+}
+
+loadProductConfiguration();
 loadRecentVideos();
+loadConfiguration();
