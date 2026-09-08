@@ -209,6 +209,40 @@ button:disabled {
   background: #111;
 }
 
+.platform-plan {
+  grid-column: 1 / -1;
+  margin: 8px 0 2px;
+}
+
+.platform-plan .field-note {
+  max-width: 570px;
+  margin: 0 0 12px;
+}
+
+.platform-plan-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 170px;
+  gap: 18px;
+  align-items: center;
+  padding: 8px 0;
+  border-top: 1px dotted #c5c2b8;
+}
+
+.platform-plan-row label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.platform-plan-row input[type="checkbox"] {
+  width: 18px;
+  min-height: 18px;
+}
+
+.platform-plan-row input[type="number"] {
+  width: 90px;
+}
+
 .plain-button,
 .plain-link {
   min-height: auto;
@@ -586,6 +620,42 @@ progress::-moz-progress-bar {
   border-top: 3px solid #111;
 }
 
+.platform-group {
+  margin-top: 34px;
+}
+
+.platform-group > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.8fr);
+  gap: 24px;
+  align-items: end;
+  padding: 12px 0;
+  border-top: 6px double #111;
+}
+
+.platform-group > header h3,
+.platform-group > header p {
+  margin: 0;
+}
+
+.platform-group > header h3 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 30px;
+  font-weight: normal;
+}
+
+.platform-group > header p,
+.clip-platform {
+  font-family: "Courier New", monospace;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.clip-platform {
+  margin: 0 0 4px;
+  font-weight: bold;
+}
+
 .clip-result > header {
   display: flex;
   justify-content: space-between;
@@ -807,6 +877,10 @@ legend span {
   margin-top: 12px;
 }
 
+.clip-analytics-form {
+  grid-template-columns: 150px minmax(0, 1fr) auto;
+}
+
 .analytics-form label {
   display: grid;
   gap: 4px;
@@ -858,7 +932,8 @@ footer p {
 
   .masthead,
   .results-heading,
-  .clip-result > header {
+  .clip-result > header,
+  .platform-group > header {
     align-items: flex-start;
     flex-direction: column;
     gap: 8px;
@@ -889,6 +964,15 @@ footer p {
   .performance-form,
   .analytics-form,
   footer {
+    grid-template-columns: 1fr;
+  }
+
+  .platform-plan {
+    grid-column: 1;
+  }
+
+  .platform-plan-row,
+  .clip-analytics-form {
     grid-template-columns: 1fr;
   }
 

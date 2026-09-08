@@ -1,4 +1,4 @@
-"""Parse YouTube Studio analytics exports into a stable product schema."""
+"""Parse YouTube, Instagram, and TikTok analytics into one stable schema."""
 
 from __future__ import annotations
 
@@ -9,6 +9,9 @@ import re
 import zipfile
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree
+
+SUPPORTED_ANALYTICS_PLATFORMS = {"youtube", "instagram", "tiktok"}
 
 MAXIMUM_ANALYTICS_BYTES = 20 * 1024 * 1024
 MAXIMUM_UNCOMPRESSED_ANALYTICS_BYTES = 50 * 1024 * 1024
@@ -25,8 +28,17 @@ def normalize_header(value: str) -> str:
 
 FIELD_ALIASES = {
     "date": {"date", "day"},
-    "content": {"content", "video", "video title"},
-    "video_id": {"video id"},
+    "content": {
+        "content",
+        "video",
+        "video title",
+        "post",
+        "post caption",
+        "caption",
+        "description",
+        "reel",
+    },
+    "video_id": {"video id", "post id", "media id", "reel id", "item id"},
     "channel_id": {"channel id"},
     "creator_content_type": {"creator content type", "content type"},
     "subscribed_status": {"subscribed status"},
@@ -40,13 +52,36 @@ FIELD_ALIASES = {
     "gender": {"gender"},
     "sharing_service": {"sharing service"},
     "subtitle_language": {"subtitle language"},
-    "views": {"views"},
+    "views": {
+        "views",
+        "video views",
+        "post views",
+        "reel views",
+        "reels views",
+        "plays",
+        "video play count",
+        "initial plays",
+        "initial views",
+    },
     "engaged_views": {"engaged views"},
-    "watch_time_hours": {"watch time hours", "watch time"},
+    "watch_time_hours": {"watch time hours"},
     "watch_time_minutes": {"watch time minutes", "estimated minutes watched"},
+    "watch_time_seconds": {
+        "watch time",
+        "watch time seconds",
+        "total watch time",
+        "total play time",
+        "total watch duration",
+        "video view total time",
+        "ig reels video view total time",
+    },
     "average_view_duration_seconds": {
         "average view duration",
         "average view duration seconds",
+        "average watch time",
+        "average watch time seconds",
+        "avg watch time",
+        "ig reels avg watch time",
     },
     "average_view_percentage": {
         "average percentage viewed percentage",
@@ -58,6 +93,25 @@ FIELD_ALIASES = {
     "dislikes": {"dislikes"},
     "comments": {"comments"},
     "shares": {"shares"},
+    "saves": {"saves", "saved"},
+    "reach": {"reach", "accounts reached", "unique viewers", "reached audience"},
+    "follows": {"follows", "new follows", "new followers", "followers gained"},
+    "profile_visits": {"profile visits", "profile views"},
+    "replays": {
+        "replays",
+        "replay count",
+        "clips replays count",
+        "aggregated all plays count",
+    },
+    "total_interactions": {"total interactions", "interactions", "engagement"},
+    "completion_rate_percentage": {
+        "watched full video percentage",
+        "watched full video",
+        "full video watched percentage",
+        "completion rate percentage",
+        "completion rate",
+        "completed video percentage",
+    },
     "subscribers": {"subscribers"},
     "subscribers_gained": {"subscribers gained"},
     "subscribers_lost": {"subscribers lost"},
@@ -109,6 +163,12 @@ INTEGER_FIELDS = {
     "subscribers_lost",
     "shown_in_feed",
     "thumbnail_impressions",
+    "saves",
+    "reach",
+    "follows",
+    "profile_visits",
+    "replays",
+    "total_interactions",
 }
 
 DIMENSION_FIELDS = {
@@ -134,6 +194,7 @@ PERCENTAGE_FIELDS = {
     "average_view_percentage",
     "chose_to_view_percentage",
     "thumbnail_ctr",
+    "completion_rate_percentage",
 }
 
 
@@ -154,6 +215,10 @@ def _parse_number(value: Any) -> float | None:
 def _parse_duration_seconds(value: Any) -> float | None:
     number = _parse_number(value)
     text = str(value).strip() if value is not None else ""
+    unit_parts = re.findall(r"(\d+(?:\.\d+)?)\s*([hms])", text.casefold())
+    if unit_parts:
+        multiplier = {"h": 3600.0, "m": 60.0, "s": 1.0}
+        return sum(float(amount) * multiplier[unit] for amount, unit in unit_parts)
     if ":" not in text:
         return number
     try:
@@ -177,7 +242,7 @@ def _canonical_row(row: dict[str, Any]) -> dict[str, Any]:
         if field in DIMENSION_FIELDS:
             cleaned = str(value or "").strip()
             canonical[field] = cleaned or None
-        elif field == "average_view_duration_seconds":
+        elif field in {"average_view_duration_seconds", "watch_time_seconds"}:
             canonical[field] = _parse_duration_seconds(value)
         else:
             number = _parse_number(value)
@@ -210,10 +275,12 @@ def _decode_csv(value: bytes) -> str:
 
 def _csv_files(filename: str, payload: bytes) -> list[tuple[str, bytes]]:
     suffix = Path(filename).suffix.casefold()
-    if suffix == ".csv":
+    if suffix in {".csv", ".tsv"}:
         return [(Path(filename).name, payload)]
+    if suffix == ".xlsx":
+        return _xlsx_csv_files(filename, payload)
     if suffix != ".zip":
-        raise ValueError("Upload a YouTube Studio .zip or .csv export")
+        raise ValueError("Upload a .csv, .tsv, .xlsx, or supported analytics .zip export")
     try:
         with zipfile.ZipFile(io.BytesIO(payload)) as archive:
             members = [
@@ -230,6 +297,87 @@ def _csv_files(filename: str, payload: bytes) -> list[tuple[str, bytes]]:
             return [(Path(member.filename).name, archive.read(member)) for member in members]
     except zipfile.BadZipFile as error:
         raise ValueError("The analytics ZIP archive is invalid") from error
+
+
+def _column_index(reference: str) -> int:
+    letters = "".join(character for character in reference if character.isalpha())
+    result = 0
+    for character in letters.upper():
+        result = result * 26 + ord(character) - ord("A") + 1
+    return max(0, result - 1)
+
+
+def _xlsx_csv_files(filename: str, payload: bytes) -> list[tuple[str, bytes]]:
+    """Read ordinary Google Sheets/Excel exports without introducing a workbook runtime."""
+    namespace = {"main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    relationship_namespace = {
+        "rel": "http://schemas.openxmlformats.org/package/2006/relationships"
+    }
+    office_relationship = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            shared: list[str] = []
+            if "xl/sharedStrings.xml" in archive.namelist():
+                root = ElementTree.fromstring(archive.read("xl/sharedStrings.xml"))
+                shared = [
+                    "".join(node.text or "" for node in item.findall(".//main:t", namespace))
+                    for item in root.findall("main:si", namespace)
+                ]
+            workbook = ElementTree.fromstring(archive.read("xl/workbook.xml"))
+            relationships = ElementTree.fromstring(
+                archive.read("xl/_rels/workbook.xml.rels")
+            )
+            targets = {
+                item.attrib["Id"]: item.attrib["Target"]
+                for item in relationships.findall("rel:Relationship", relationship_namespace)
+            }
+            sheets = workbook.findall("main:sheets/main:sheet", namespace)
+            if len(sheets) > MAXIMUM_CSV_FILES:
+                raise ValueError("The analytics workbook contains too many sheets")
+            converted: list[tuple[str, bytes]] = []
+            for sheet in sheets:
+                target = targets.get(sheet.attrib.get(office_relationship, ""))
+                if not target:
+                    continue
+                worksheet_path = target.lstrip("/")
+                if not worksheet_path.startswith("xl/"):
+                    worksheet_path = f"xl/{worksheet_path}"
+                root = ElementTree.fromstring(archive.read(worksheet_path))
+                rows: list[list[str]] = []
+                for row in root.findall(".//main:sheetData/main:row", namespace):
+                    values: dict[int, str] = {}
+                    for cell in row.findall("main:c", namespace):
+                        index = _column_index(cell.attrib.get("r", "A1"))
+                        cell_type = cell.attrib.get("t")
+                        if cell_type == "inlineStr":
+                            value = "".join(
+                                node.text or ""
+                                for node in cell.findall(".//main:t", namespace)
+                            )
+                        else:
+                            node = cell.find("main:v", namespace)
+                            value = node.text if node is not None and node.text is not None else ""
+                            if cell_type == "s" and value:
+                                value = shared[int(value)]
+                        values[index] = value
+                    if values:
+                        rows.append([values.get(index, "") for index in range(max(values) + 1)])
+                if not rows:
+                    continue
+                output = io.StringIO()
+                writer = csv.writer(output)
+                writer.writerows(rows)
+                converted.append(
+                    (
+                        f"{Path(filename).stem}-{sheet.attrib.get('name', 'Sheet')}.csv",
+                        output.getvalue().encode(),
+                    )
+                )
+            if not converted:
+                raise ValueError("The analytics workbook does not contain readable rows")
+            return converted
+    except (KeyError, IndexError, ElementTree.ParseError, zipfile.BadZipFile) as error:
+        raise ValueError("The analytics workbook is invalid") from error
 
 
 def _retention_ratio(value: float) -> float:
@@ -253,8 +401,12 @@ def _report_type(fields: set[str]) -> str:
     return "summary"
 
 
-def parse_youtube_analytics_export(filename: str, payload: bytes) -> dict[str, Any]:
-    """Parse one YouTube Studio ZIP/CSV export without assuming a fixed report layout."""
+def parse_analytics_export(
+    platform: str, filename: str, payload: bytes
+) -> dict[str, Any]:
+    """Parse one supported creator-platform export without a fixed column order."""
+    if platform not in SUPPORTED_ANALYTICS_PLATFORMS:
+        raise ValueError("Choose YouTube, Instagram Reels, or TikTok analytics")
     if not payload:
         raise ValueError("The analytics export is empty")
     if len(payload) > MAXIMUM_ANALYTICS_BYTES:
@@ -270,7 +422,8 @@ def parse_youtube_analytics_export(filename: str, payload: bytes) -> dict[str, A
 
     for csv_name, csv_bytes in _csv_files(filename, payload):
         text = _decode_csv(csv_bytes)
-        reader = csv.DictReader(io.StringIO(text))
+        delimiter = "\t" if Path(csv_name).suffix.casefold() == ".tsv" else ","
+        reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
         if not reader.fieldnames:
             continue
         parsed_files.append(csv_name)
@@ -313,7 +466,12 @@ def parse_youtube_analytics_export(filename: str, payload: bytes) -> dict[str, A
                     retention_rows.append(point)
 
     if recognized_rows == 0:
-        raise ValueError("No supported YouTube analytics columns were found")
+        label = {
+            "youtube": "YouTube",
+            "instagram": "Instagram",
+            "tiktok": "TikTok",
+        }[platform]
+        raise ValueError(f"No supported {label} analytics columns were found")
 
     simple_daily_rows = [
         row
@@ -357,8 +515,9 @@ def parse_youtube_analytics_export(filename: str, payload: bytes) -> dict[str, A
         warnings.append("No timestamped audience-retention curve was included")
 
     return {
-        "schema_version": 1,
-        "source": "youtube_studio_export",
+        "schema_version": 2,
+        "platform": platform,
+        "source": f"{platform}_creator_analytics_export",
         "source_files": parsed_files,
         "totals": totals,
         "daily_rows": daily_rows,
@@ -370,6 +529,11 @@ def parse_youtube_analytics_export(filename: str, payload: bytes) -> dict[str, A
     }
 
 
+def parse_youtube_analytics_export(filename: str, payload: bytes) -> dict[str, Any]:
+    """Retain the original YouTube-specific API for older callers and snapshots."""
+    return parse_analytics_export("youtube", filename, payload)
+
+
 def performance_values(report: dict[str, Any]) -> dict[str, Any]:
     """Map parsed totals into the performance-report columns used by the product store."""
     totals = report.get("totals", {})
@@ -377,11 +541,19 @@ def performance_values(report: dict[str, Any]) -> dict[str, Any]:
         "views",
         "engaged_views",
         "watch_time_hours",
+        "watch_time_seconds",
         "average_view_duration_seconds",
         "average_view_percentage",
         "likes",
         "comments",
         "shares",
+        "saves",
+        "reach",
+        "follows",
+        "profile_visits",
+        "replays",
+        "total_interactions",
+        "completion_rate_percentage",
         "subscribers_gained",
         "subscribers_lost",
         "shown_in_feed",
@@ -393,4 +565,6 @@ def performance_values(report: dict[str, Any]) -> dict[str, Any]:
     values["subscribers_net"] = totals.get("subscribers")
     if values["watch_time_hours"] is None and totals.get("watch_time_minutes") is not None:
         values["watch_time_hours"] = float(totals["watch_time_minutes"]) / 60.0
+    if values["watch_time_hours"] is None and totals.get("watch_time_seconds") is not None:
+        values["watch_time_hours"] = float(totals["watch_time_seconds"]) / 3600.0
     return values

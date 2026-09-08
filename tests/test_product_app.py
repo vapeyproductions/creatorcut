@@ -29,7 +29,13 @@ def test_validate_performance_report_preserves_missing_metrics():
         "likes": None,
         "comments": None,
         "shares": 4,
+        "saves": None,
+        "reach": None,
+        "follows": None,
+        "profile_visits": None,
+        "replays": None,
         "average_view_percentage": 72.5,
+        "completion_rate_percentage": None,
         "published_at": None,
     }
 

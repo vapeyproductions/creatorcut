@@ -45,7 +45,15 @@ MAXIMUM_SOURCE_RETENTION_ADJUSTMENT = 0.20
 MINIMUM_SOURCE_RETENTION_POINTS = 10
 MINIMUM_SOURCE_RETENTION_VIEWS = 100
 
-PREFERENCE_FEATURE_NAMES = ("hook", "completeness", "payoff", "clarity", "duration")
+PREFERENCE_FEATURE_NAMES = (
+    "hook",
+    "completeness",
+    "payoff",
+    "clarity",
+    "duration",
+    "audio_urgency",
+    "visual_excitement",
+)
 SEMANTIC_TREND_STOPWORDS = {
     "about",
     "after",
@@ -108,10 +116,15 @@ def utc_now() -> str:
 def preference_features(clip: dict[str, Any]) -> list[float]:
     """Map a ranked clip into a small, interpretable creator-preference vector."""
     targets = clip.get("predicted_targets", {})
+    delivery = clip.get("multimodal_features", {})
     return [
         (float(targets.get(field, 3.0)) - 3.0) / 2.0
         for field in ("hook", "completeness", "payoff", "clarity")
-    ] + [(float(clip["duration_seconds"]) - 40.0) / 20.0]
+    ] + [
+        (float(clip["duration_seconds"]) - 40.0) / 20.0,
+        2.0 * float(delivery.get("audio_urgency_score", 0.5)) - 1.0,
+        2.0 * float(delivery.get("visual_excitement_score", 0.5)) - 1.0,
+    ]
 
 
 def numeric_summary(values: list[float]) -> dict[str, float | int | None]:
@@ -215,6 +228,7 @@ class ProductStore:
                 status TEXT NOT NULL,
                 duration_seconds REAL,
                 error_message TEXT,
+                clip_plan_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -232,6 +246,11 @@ class ProductStore:
                 personalized_score REAL NOT NULL,
                 predicted_targets_json TEXT NOT NULL,
                 explanation TEXT NOT NULL,
+                platform TEXT NOT NULL DEFAULT 'youtube',
+                platform_rank INTEGER,
+                platform_score REAL,
+                platform_adjustment REAL NOT NULL DEFAULT 0,
+                multimodal_features_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
                 UNIQUE(video_id, rank)
             )
@@ -260,6 +279,13 @@ class ProductStore:
                 comments INTEGER,
                 shares INTEGER,
                 average_view_percentage REAL,
+                completion_rate_percentage REAL,
+                saves INTEGER,
+                reach INTEGER,
+                follows INTEGER,
+                profile_visits INTEGER,
+                replays INTEGER,
+                total_interactions INTEGER,
                 published_at TEXT,
                 created_at TEXT NOT NULL
             )
@@ -390,6 +416,7 @@ class ProductStore:
         migrations = {
             "videos": {
                 "publishability_summary_json": "TEXT NOT NULL DEFAULT '{}'",
+                "clip_plan_json": "TEXT NOT NULL DEFAULT '{}'",
             },
             "clips": {
                 "global_rank": "INTEGER",
@@ -402,6 +429,11 @@ class ProductStore:
                 "semantic_embedding_json": "TEXT",
                 "publishability_json": "TEXT NOT NULL DEFAULT '{}'",
                 "publishability_adjustment": "REAL NOT NULL DEFAULT 0",
+                "platform": "TEXT NOT NULL DEFAULT 'youtube'",
+                "platform_rank": "INTEGER",
+                "platform_score": "REAL",
+                "platform_adjustment": "REAL NOT NULL DEFAULT 0",
+                "multimodal_features_json": "TEXT NOT NULL DEFAULT '{}'",
             },
             "performance_reports": {
                 "engaged_views": "INTEGER",
@@ -415,6 +447,13 @@ class ProductStore:
                 "thumbnail_impressions": "INTEGER",
                 "thumbnail_ctr": "REAL",
                 "analytics_import_id": "TEXT",
+                "completion_rate_percentage": "REAL",
+                "saves": "INTEGER",
+                "reach": "INTEGER",
+                "follows": "INTEGER",
+                "profile_visits": "INTEGER",
+                "replays": "INTEGER",
+                "total_interactions": "INTEGER",
             },
         }
         for table, columns in migrations.items():
@@ -720,7 +759,11 @@ class ProductStore:
         }
 
     def create_video(
-        self, creator_id: str, original_filename: str, media_path: Path
+        self,
+        creator_id: str,
+        original_filename: str,
+        media_path: Path,
+        clip_plan: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Register an uploaded source before background inference begins."""
         video_id = f"upload_{uuid.uuid4().hex}"
@@ -729,14 +772,16 @@ class ProductStore:
             connection.execute(
                 """
                 INSERT INTO videos(
-                    id, creator_id, original_filename, media_path, status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, 'queued', ?, ?)
+                    id, creator_id, original_filename, media_path, status,
+                    clip_plan_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?)
                 """,
                 (
                     video_id,
                     creator_id,
                     original_filename,
                     media_path.as_posix(),
+                    json.dumps(clip_plan or {}, sort_keys=True),
                     created_at,
                     created_at,
                 ),
@@ -751,6 +796,16 @@ class ProductStore:
                 (video_id, created_at, created_at, created_at),
             )
         return self.get_video(video_id)
+
+    def save_video_clip_plan(self, video_id: str, clip_plan: dict[str, Any]) -> None:
+        """Persist the requested plan together with model-derived count recommendations."""
+        with self._write_lock, self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE videos SET clip_plan_json = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(clip_plan, sort_keys=True), utc_now(), video_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(video_id)
 
     def update_video(
         self,
@@ -1035,7 +1090,7 @@ class ProductStore:
             return False
 
     def save_ranked_clips(self, video_id: str, clips: list[dict[str, Any]]) -> None:
-        """Persist the three displayed results and one exposure event per result."""
+        """Persist displayed platform results and one exposure event per result."""
         video = self.get_video(video_id)
         with self._write_lock, self._connect() as connection:
             for clip in clips:
@@ -1049,8 +1104,13 @@ class ProductStore:
                         editorial_adjustment, performance_adjustment,
                         semantic_performance_adjustment, source_retention_adjustment,
                         publishability_json, publishability_adjustment,
-                        semantic_embedding_json, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        semantic_embedding_json, platform, platform_rank,
+                        platform_score, platform_adjustment, multimodal_features_json,
+                        created_at
+                    ) VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?
+                    )
                     """,
                     (
                         clip["id"],
@@ -1076,6 +1136,11 @@ class ProductStore:
                         json.dumps(clip.get("semantic_embedding"))
                         if clip.get("semantic_embedding") is not None
                         else None,
+                        clip.get("platform", "youtube"),
+                        clip.get("platform_rank", clip["rank"]),
+                        clip.get("platform_score", clip["personalized_score"]),
+                        clip.get("platform_adjustment", 0.0),
+                        json.dumps(clip.get("multimodal_features", {}), sort_keys=True),
                         utc_now(),
                     ),
                 )
@@ -1117,6 +1182,17 @@ class ProductStore:
                                 "publishability_adjustment": clip.get(
                                     "publishability_adjustment", 0.0
                                 ),
+                                "platform": clip.get("platform", "youtube"),
+                                "platform_rank": clip.get("platform_rank", clip["rank"]),
+                                "platform_score": clip.get(
+                                    "platform_score", clip["personalized_score"]
+                                ),
+                                "platform_adjustment": clip.get(
+                                    "platform_adjustment", 0.0
+                                ),
+                                "multimodal_features": clip.get(
+                                    "multimodal_features", {}
+                                ),
                             },
                             sort_keys=True,
                         ),
@@ -1142,8 +1218,13 @@ class ProductStore:
                     ranking_model_version, origin, editorial_adjustment,
                     performance_adjustment, semantic_performance_adjustment,
                     source_retention_adjustment, publishability_json,
-                    publishability_adjustment, semantic_embedding_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    publishability_adjustment, semantic_embedding_json, platform,
+                    platform_rank, platform_score, platform_adjustment,
+                    multimodal_features_json, created_at
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?
+                )
                 """,
                 (
                     clip_id,
@@ -1167,6 +1248,11 @@ class ProductStore:
                     json.dumps(clip.get("publishability", {}), sort_keys=True),
                     clip.get("publishability_adjustment", 0.0),
                     json.dumps(clip["semantic_embedding"]),
+                    clip.get("platform", "youtube"),
+                    clip.get("platform_rank"),
+                    clip.get("platform_score", clip["personalized_score"]),
+                    clip.get("platform_adjustment", 0.0),
+                    json.dumps(clip.get("multimodal_features", {}), sort_keys=True),
                     utc_now(),
                 ),
             )
@@ -1194,6 +1280,10 @@ class ProductStore:
                             "publishability": clip.get("publishability", {}),
                             "publishability_adjustment": clip.get(
                                 "publishability_adjustment", 0.0
+                            ),
+                            "platform": clip.get("platform", "youtube"),
+                            "platform_score": clip.get(
+                                "platform_score", clip["personalized_score"]
                             ),
                         },
                         sort_keys=True,
@@ -1280,6 +1370,7 @@ class ProductStore:
         video["publishability_summary"] = json.loads(
             video.pop("publishability_summary_json", "{}")
         )
+        video["clip_plan"] = json.loads(video.pop("clip_plan_json", "{}"))
         video["clips"] = [self._public_clip(dict(clip)) for clip in clips]
         video["job"] = self.processing_job_for_video(video_id)
         video["source_analytics"] = self.source_analytics_summary(video_id)
@@ -1411,7 +1502,9 @@ class ProductStore:
                        AVG(ABS(source_retention_adjustment)) AS retention_mean_absolute,
                        MAX(ABS(source_retention_adjustment)) AS retention_max_absolute,
                        AVG(ABS(publishability_adjustment)) AS publishability_mean_absolute,
-                       MAX(ABS(publishability_adjustment)) AS publishability_max_absolute
+                       MAX(ABS(publishability_adjustment)) AS publishability_max_absolute,
+                       AVG(ABS(platform_adjustment)) AS platform_mean_absolute,
+                       MAX(ABS(platform_adjustment)) AS platform_max_absolute
                 FROM clips
                 JOIN videos ON videos.id = clips.video_id
                 WHERE videos.creator_id = ? AND clips.origin = 'model'
@@ -1441,7 +1534,8 @@ class ProductStore:
                 """
                 SELECT feedback_events.event_type, feedback_events.start_seconds,
                        feedback_events.end_seconds, feedback_events.created_at,
-                       clips.rank, clips.origin, videos.original_filename
+                       clips.rank, clips.platform_rank, clips.platform,
+                       clips.origin, videos.original_filename
                 FROM feedback_events
                 JOIN clips ON clips.id = feedback_events.clip_id
                 JOIN videos ON videos.id = feedback_events.video_id
@@ -1561,7 +1655,8 @@ class ProductStore:
             ).fetchall()
             clips = connection.execute(
                 """
-                SELECT clips.id, videos.creator_id, clips.rank, clips.origin,
+                SELECT clips.id, videos.creator_id, clips.rank, clips.platform_rank,
+                       clips.platform, clips.origin,
                        clips.duration_seconds, clips.global_score,
                        clips.personalized_score
                 FROM clips JOIN videos ON videos.id = clips.video_id
@@ -1573,7 +1668,7 @@ class ProductStore:
                 SELECT feedback_events.creator_id, feedback_events.clip_id,
                        feedback_events.event_type, feedback_events.start_seconds,
                        feedback_events.end_seconds, feedback_events.payload_json,
-                       clips.rank, clips.origin,
+                       clips.rank, clips.platform_rank, clips.platform, clips.origin,
                        clips.start_seconds AS proposed_start,
                        clips.end_seconds AS proposed_end
                 FROM feedback_events
@@ -1583,7 +1678,7 @@ class ProductStore:
             ).fetchall()
             analytics = connection.execute(
                 """
-                SELECT creator_id, report_role, original_filename, report_json,
+                SELECT creator_id, report_role, platform, original_filename, report_json,
                        recognized_row_count
                 FROM analytics_imports ORDER BY created_at, id
                 """
@@ -1627,7 +1722,9 @@ class ProductStore:
                 "edited_download_count": 0,
                 "total_boundary_changes": [],
                 "analytics_import_count": 0,
+                "analytics_platform_counts": Counter(),
                 "performance_report_count": 0,
+                "performance_platform_counts": Counter(),
                 "repurposing_feedback_count": 0,
             }
             for row in creators
@@ -1644,6 +1741,7 @@ class ProductStore:
                 source_durations.append(float(row["duration_seconds"]))
 
         clip_origins: Counter[str] = Counter()
+        clip_platforms: Counter[str] = Counter()
         clip_durations: list[float] = []
         global_scores: list[float] = []
         personalized_scores: list[float] = []
@@ -1652,6 +1750,7 @@ class ProductStore:
             key = "custom_clip_count" if row["origin"] == "creator" else "model_clip_count"
             account[key] += 1
             clip_origins[row["origin"]] += 1
+            clip_platforms[row["platform"]] += 1
             clip_durations.append(float(row["duration_seconds"]))
             global_scores.append(float(row["global_score"]))
             personalized_scores.append(float(row["personalized_score"]))
@@ -1670,13 +1769,15 @@ class ProductStore:
             event_counts[event_type] += 1
             if row["origin"] == "model" and event_type == "presented":
                 account["presented_clip_ids"].add(row["clip_id"])
-                presented_by_rank.setdefault(int(row["rank"]), set()).add(row["clip_id"])
+                display_rank = int(row["platform_rank"] or row["rank"])
+                presented_by_rank.setdefault(display_rank, set()).add(row["clip_id"])
             if row["origin"] == "model" and event_type in {
                 "download_original",
                 "download_edited",
             }:
                 account["selected_clip_ids"].add(row["clip_id"])
-                selected_by_rank.setdefault(int(row["rank"]), set()).add(row["clip_id"])
+                display_rank = int(row["platform_rank"] or row["rank"])
+                selected_by_rank.setdefault(display_rank, set()).add(row["clip_id"])
             if event_type in {"download_original", "download_edited"}:
                 selected_durations.append(
                     float(row["end_seconds"]) - float(row["start_seconds"])
@@ -1699,16 +1800,19 @@ class ProductStore:
 
         analytics_extensions: Counter[str] = Counter()
         analytics_roles: Counter[str] = Counter()
+        analytics_platforms: Counter[str] = Counter()
         analytics_report_types: Counter[str] = Counter()
         analytics_metric_coverage: Counter[str] = Counter()
         retention_point_counts: list[float] = []
         recognized_analytics_rows = 0
         for row in analytics:
             accounts[row["creator_id"]]["analytics_import_count"] += 1
+            accounts[row["creator_id"]]["analytics_platform_counts"][row["platform"]] += 1
             analytics_extensions[
                 Path(row["original_filename"]).suffix.casefold() or "no_extension"
             ] += 1
             analytics_roles[row["report_role"]] += 1
+            analytics_platforms[row["platform"]] += 1
             recognized_analytics_rows += int(row["recognized_row_count"])
             report = json.loads(row["report_json"])
             for report_type in report.get("report_types", []):
@@ -1731,13 +1835,23 @@ class ProductStore:
             "chose_to_view_percentage",
             "thumbnail_impressions",
             "thumbnail_ctr",
+            "completion_rate_percentage",
+            "saves",
+            "reach",
+            "follows",
+            "profile_visits",
+            "replays",
+            "total_interactions",
         )
         performance_metric_coverage: Counter[str] = Counter()
+        performance_platforms: Counter[str] = Counter()
         performance_metric_values: dict[str, list[float]] = {
             field: [] for field in performance_metric_fields
         }
         for row in performance:
             accounts[row["creator_id"]]["performance_report_count"] += 1
+            accounts[row["creator_id"]]["performance_platform_counts"][row["platform"]] += 1
+            performance_platforms[row["platform"]] += 1
             for field in performance_metric_fields:
                 if row[field] is not None:
                     performance_metric_coverage[field] += 1
@@ -1755,6 +1869,12 @@ class ProductStore:
             selected_count = len(account.pop("selected_clip_ids"))
             rejected_count = len(account.pop("rejected_clip_ids"))
             edit_values = account.pop("total_boundary_changes")
+            account["analytics_platform_counts"] = dict(
+                sorted(account["analytics_platform_counts"].items())
+            )
+            account["performance_platform_counts"] = dict(
+                sorted(account["performance_platform_counts"].items())
+            )
             account_rows.append(
                 {
                     **account,
@@ -1812,6 +1932,7 @@ class ProductStore:
                 "video_status_counts": dict(sorted(video_statuses.items())),
                 "source_duration_seconds": numeric_summary(source_durations),
                 "clip_origins": dict(sorted(clip_origins.items())),
+                "clip_platforms": dict(sorted(clip_platforms.items())),
                 "clip_duration_seconds": numeric_summary(clip_durations),
                 "selected_duration_seconds": numeric_summary(selected_durations),
                 "export_format_counts": dict(sorted(export_formats.items())),
@@ -1826,11 +1947,13 @@ class ProductStore:
                 "import_count": len(analytics),
                 "file_types": dict(sorted(analytics_extensions.items())),
                 "report_roles": dict(sorted(analytics_roles.items())),
+                "platforms": dict(sorted(analytics_platforms.items())),
                 "report_types": dict(sorted(analytics_report_types.items())),
                 "recognized_row_count": recognized_analytics_rows,
                 "metric_coverage": dict(sorted(analytics_metric_coverage.items())),
                 "retention_points_per_import": numeric_summary(retention_point_counts),
                 "performance_report_count": len(performance),
+                "performance_platforms": dict(sorted(performance_platforms.items())),
                 "performance_metric_coverage": dict(
                     sorted(performance_metric_coverage.items())
                 ),
@@ -2063,8 +2186,13 @@ class ProductStore:
                     average_view_percentage, published_at, created_at, engaged_views,
                     watch_time_hours, average_view_duration_seconds, subscribers_gained,
                     subscribers_lost, subscribers_net, shown_in_feed, chose_to_view_percentage,
-                    thumbnail_impressions, thumbnail_ctr, analytics_import_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    thumbnail_impressions, thumbnail_ctr, analytics_import_id,
+                    completion_rate_percentage, saves, reach, follows, profile_visits,
+                    replays, total_interactions
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?
+                )
                 """,
                 (
                     clip["creator_id"],
@@ -2088,6 +2216,13 @@ class ProductStore:
                     value.get("thumbnail_impressions"),
                     value.get("thumbnail_ctr"),
                     analytics_import_id,
+                    value.get("completion_rate_percentage"),
+                    value.get("saves"),
+                    value.get("reach"),
+                    value.get("follows"),
+                    value.get("profile_visits"),
+                    value.get("replays"),
+                    value.get("total_interactions"),
                 ),
             )
 
@@ -2119,7 +2254,7 @@ class ProductStore:
             if row.get("content") and str(row["content"]).casefold() != "total"
         }
         if len(report_video_ids) > 1 or (not report_video_ids and len(report_contents) > 1):
-            raise ValueError("Choose a YouTube analytics export filtered to one video or Short")
+            raise ValueError("Choose an analytics export filtered to one video")
 
         if clip_id is not None:
             clip = self.get_clip(clip_id)
@@ -2199,6 +2334,10 @@ class ProductStore:
                     "likes",
                     "comments",
                     "shares",
+                    "saves",
+                    "follows",
+                    "completion_rate_percentage",
+                    "profile_visits",
                     "subscribers_gained",
                     "subscribers_lost",
                     "subscribers_net",
@@ -2209,8 +2348,13 @@ class ProductStore:
                 and exposure >= MINIMUM_PERFORMANCE_VIEWS
                 and has_outcome
             )
+            label = {
+                "youtube": "YouTube Shorts",
+                "instagram": "Instagram Reels",
+                "tiktok": "TikTok videos",
+            }.get(value["platform"], "short-form posts")
             status = (
-                "This report can contribute after five comparable Shorts are available."
+                f"This report can contribute after five comparable {label} are available."
                 if active
                 else "Saved, but it needs enough exposure and at least one outcome metric."
             )
@@ -2256,7 +2400,11 @@ class ProductStore:
         if exposure is None or exposure < MINIMUM_PERFORMANCE_VIEWS:
             return {}
         components: dict[str, float] = {}
-        for field in ("average_view_percentage", "chose_to_view_percentage"):
+        for field in (
+            "average_view_percentage",
+            "chose_to_view_percentage",
+            "completion_rate_percentage",
+        ):
             if row.get(field) is not None:
                 components[field] = float(row[field]) / 100.0
         if row.get("average_view_duration_seconds") is not None and row.get(
@@ -2266,9 +2414,13 @@ class ProductStore:
                 2.0,
                 float(row["average_view_duration_seconds"]) / float(row["duration_seconds"]),
             )
-        for field in ("likes", "comments", "shares"):
+        for field in ("likes", "comments", "shares", "saves", "profile_visits"):
             if row.get(field) is not None:
                 components[f"{field}_per_view"] = float(row[field]) / exposure
+        if row.get("replays") is not None:
+            components["replays_per_view"] = float(row["replays"]) / exposure
+        if row.get("reach") is not None and float(row["reach"]) > 0:
+            components["plays_per_reached_account"] = float(exposure) / float(row["reach"])
         gained = row.get("subscribers_gained")
         lost = row.get("subscribers_lost")
         net = row.get("subscribers_net")
@@ -2276,6 +2428,8 @@ class ProductStore:
             components["net_subscribers_per_view"] = (
                 float(net) if net is not None else float(gained or 0) - float(lost or 0)
             ) / exposure
+        if row.get("follows") is not None:
+            components["follows_per_view"] = float(row["follows"]) / exposure
         return components
 
     @staticmethod
@@ -2376,6 +2530,11 @@ class ProductStore:
             "payoff": ("higher predicted payoff", "lower predicted payoff"),
             "clarity": ("higher predicted clarity", "lower predicted clarity"),
             "duration": ("longer clips", "shorter clips"),
+            "audio_urgency": ("more urgent audio delivery", "calmer audio delivery"),
+            "visual_excitement": (
+                "more visual activity and color",
+                "less visual activity and color",
+            ),
         }
         ranked_features = sorted(
             zip(PREFERENCE_FEATURE_NAMES, weights, strict=True),
@@ -2392,7 +2551,8 @@ class ProductStore:
                 "themes such as " + ", ".join(item["term"] for item in positive_terms[:3])
             )
         sentences = [
-            f"Across {example_count} eligible Shorts, stronger outcomes are currently associated "
+            f"Across {example_count} eligible clips on this platform, stronger outcomes "
+            "are currently associated "
             + ("with " + "; ".join(stronger) if stronger else "with no stable feature yet")
             + "."
         ]
@@ -2440,7 +2600,7 @@ class ProductStore:
         )
 
     def _performance_preference_profile(
-        self, creator_id: str
+        self, creator_id: str, platform: str = "youtube"
     ) -> tuple[list[float], list[tuple[list[float], float]], dict[str, Any]]:
         with self._connect() as connection:
             rows = connection.execute(
@@ -2457,14 +2617,14 @@ class ProductStore:
                            clips.duration_seconds
                        ) AS duration_seconds,
                        clips.predicted_targets_json, clips.transcript_text,
-                       clips.semantic_embedding_json
+                       clips.semantic_embedding_json, clips.multimodal_features_json
                 FROM performance_reports
                 JOIN clips ON clips.id = performance_reports.clip_id
                 WHERE performance_reports.creator_id = ?
-                  AND performance_reports.platform = 'youtube'
+                  AND performance_reports.platform = ?
                 ORDER BY performance_reports.id
                 """,
-                (creator_id,),
+                (creator_id, platform),
             ).fetchall()
         latest_by_clip = {row["clip_id"]: dict(row) for row in rows}
         examples = list(latest_by_clip.values())
@@ -2502,6 +2662,9 @@ class ProductStore:
                     {
                         "duration_seconds": row["duration_seconds"],
                         "predicted_targets": json.loads(row["predicted_targets_json"]),
+                        "multimodal_features": json.loads(
+                            row.get("multimodal_features_json") or "{}"
+                        ),
                     }
                 )
                 outcome = targets[row["clip_id"]]
@@ -2531,6 +2694,7 @@ class ProductStore:
             "eligible_clip_count": len(eligible),
             "minimum_clip_count": MINIMUM_PERFORMANCE_EXAMPLES,
             "minimum_views": MINIMUM_PERFORMANCE_VIEWS,
+            "platform": platform,
             "shrinkage": shrinkage,
             "feature_weights": dict(zip(PREFERENCE_FEATURE_NAMES, weights, strict=True)),
             "semantic_active": semantic_active,
@@ -2546,7 +2710,10 @@ class ProductStore:
         }
 
     def personalize_candidates(
-        self, creator_id: str, candidates: list[dict[str, Any]]
+        self,
+        creator_id: str,
+        candidates: list[dict[str, Any]],
+        platform: str = "youtube",
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """Apply a bounded, shrinkage-weighted creator preference adjustment."""
         with self._connect() as connection:
@@ -2554,7 +2721,7 @@ class ProductStore:
                 """
                 SELECT feedback_events.id, feedback_events.clip_id,
                        feedback_events.event_type, clips.duration_seconds,
-                       clips.predicted_targets_json
+                       clips.predicted_targets_json, clips.multimodal_features_json
                 FROM feedback_events JOIN clips ON clips.id = feedback_events.clip_id
                 WHERE feedback_events.creator_id = ?
                   AND feedback_events.event_type IN (
@@ -2568,12 +2735,15 @@ class ProductStore:
 
         latest_by_clip = {row["clip_id"]: dict(row) for row in rows}
         examples = list(latest_by_clip.values())
-        weights = [0.0] * 5
+        weights = [0.0] * len(PREFERENCE_FEATURE_NAMES)
         for example in examples:
             features = preference_features(
                 {
                     "duration_seconds": example["duration_seconds"],
                     "predicted_targets": json.loads(example["predicted_targets_json"]),
+                    "multimodal_features": json.loads(
+                        example.get("multimodal_features_json") or "{}"
+                    ),
                 }
             )
             outcome = EDITORIAL_EVENT_WEIGHTS[example["event_type"]]
@@ -2594,7 +2764,7 @@ class ProductStore:
             performance_weights,
             semantic_examples,
             performance_metadata,
-        ) = self._performance_preference_profile(creator_id)
+        ) = self._performance_preference_profile(creator_id, platform)
         personalized: list[dict[str, Any]] = []
         for candidate in candidates:
             features = preference_features(candidate)
@@ -2748,7 +2918,12 @@ class ProductStore:
             analytics_count = connection.execute(
                 "SELECT COUNT(*) FROM analytics_imports WHERE creator_id = ?", (creator_id,)
             ).fetchone()[0]
-        _, _, performance = self._performance_preference_profile(creator_id)
+        platform_performance = {}
+        for platform in ("youtube", "instagram", "tiktok"):
+            _, _, platform_performance[platform] = self._performance_preference_profile(
+                creator_id, platform
+            )
+        performance = platform_performance["youtube"]
         return {
             "decision_count": decision_count,
             "editorial_minimum_decision_count": MINIMUM_EDITORIAL_DECISIONS,
@@ -2763,6 +2938,7 @@ class ProductStore:
             "positive_semantic_trends": performance["positive_semantic_trends"],
             "negative_semantic_trends": performance["negative_semantic_trends"],
             "performance_insight_summary": performance["insight_summary"],
+            "platform_performance": platform_performance,
         }
 
     def feedback_training_records(
@@ -2856,6 +3032,8 @@ class ProductStore:
                         "clip_id": clip["id"],
                         "origin": clip["origin"],
                         "display_rank": clip["rank"],
+                        "platform": clip.get("platform", "youtube"),
+                        "platform_rank": clip.get("platform_rank"),
                         "global_rank": clip["global_rank"],
                         "proposed_start_seconds": clip["start_seconds"],
                         "proposed_end_seconds": clip["end_seconds"],
@@ -2871,6 +3049,10 @@ class ProductStore:
                         "predicted_targets": json.loads(clip["predicted_targets_json"]),
                         "global_score": clip["global_score"],
                         "personalized_score": clip["personalized_score"],
+                        "platform_score": clip.get("platform_score"),
+                        "multimodal_features": json.loads(
+                            clip.get("multimodal_features_json") or "{}"
+                        ),
                         "adjustments": {
                             "editorial": clip["editorial_adjustment"],
                             "performance": clip["performance_adjustment"],
@@ -2881,6 +3063,7 @@ class ProductStore:
                                 "source_retention_adjustment"
                             ],
                             "publishability": clip["publishability_adjustment"],
+                            "platform": clip.get("platform_adjustment", 0.0),
                         },
                         "publishability": json.loads(clip["publishability_json"]),
                         "editorial_label": latest_label["event_type"]
@@ -2900,5 +3083,8 @@ class ProductStore:
     def _public_clip(clip: dict[str, Any]) -> dict[str, Any]:
         clip["predicted_targets"] = json.loads(clip.pop("predicted_targets_json"))
         clip["publishability"] = json.loads(clip.pop("publishability_json", "{}"))
+        clip["multimodal_features"] = json.loads(
+            clip.pop("multimodal_features_json", "{}")
+        )
         clip.pop("semantic_embedding_json", None)
         return clip

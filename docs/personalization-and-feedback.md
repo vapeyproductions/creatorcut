@@ -7,15 +7,16 @@ CreatorCut's local product surface runs one deliberately narrow workflow:
 1. A creator profile uploads a source video.
 2. The existing transcription and sentence-aligned candidate pipeline produces possible clips.
 3. Frozen ranker v1 scores the candidates.
-4. A diversity pass returns three recommendations from different moments in the source.
+4. The creator selects output platforms and either requests a count or uses a non-overlapping
+   model-recommended range.
 5. The creator downloads the original interval, changes its boundaries and downloads the edit, or
    explicitly rejects it.
 6. The creator can define a completely different interval if the ranked set missed the desired
    moment, then preview, edit, and export it through the same workflow.
 7. After making a selection, the creator can close the review so untouched recommendations are
    recorded as explicitly unselected rather than silently inferred from missing clicks.
-8. If the clip is published, the creator can enter metrics manually or import a YouTube Studio
-   ZIP/CSV report.
+8. If the clip is published, the creator can enter metrics manually or import a YouTube,
+   Instagram, or TikTok CSV/TSV/XLSX/ZIP report.
 
 The current build persists structured metadata in SQLite and video bytes on the local filesystem.
 This cleanly maps to a hosted design in which relational records move to D1 or Postgres and video
@@ -63,13 +64,14 @@ Post-publication metrics are deliberately stored separately from editorial decis
 not comparable across creators, platforms, account sizes, publication times, or distribution
 conditions. They must not be poured directly into the quality target.
 
-The current YouTube performance layer uses engaged views as the preferred denominator, then
-within-creator percentiles for stayed-to-watch, average viewed percentage, relative view duration,
-engagement rates, and subscriber conversion. It activates only after five distinct clips have at
-least 50 views or engaged views and a useful outcome metric.
+The performance layer is isolated by creator and platform. It uses engaged views as the preferred
+YouTube denominator when present, then within-creator and within-platform percentiles for available
+attention, completion, engagement, save, repeat-view, reach, profile-visit, and conversion signals.
+It activates only after five distinct clips on that platform have at least 50 views or engaged views
+and a useful outcome metric.
 
 Performance adaptation has two components. An interpretable feature component learns associations
-with hook, completeness, payoff, clarity, and duration. A semantic nearest-neighbor component uses
+with hook, completeness, payoff, clarity, duration, audio urgency, and visual excitement. A semantic nearest-neighbor component uses
 the same frozen transcript embeddings as the global ranker to transfer the outcomes of similar
 published clips to a new candidate. Repeated words and two-word phrases from stronger clips are
 displayed as trend evidence, but exact word overlap is not required for scoring. The two components
@@ -83,8 +85,9 @@ No generative model invents the summary.
 An optional source-video analytics import is handled separately. If a timestamped long-form
 audience-retention curve has at least ten points and 100 source views, it can add a within-video
 attention adjustment capped at 0.20 points. Aggregate source views never identify clip timestamps.
-See [youtube-analytics-feedback.md](youtube-analytics-feedback.md) for the full report mapping,
-thresholds, and official metric definitions.
+See [platform-aware-ranking.md](platform-aware-ranking.md) for the cross-platform ranking and report
+mapping, and [youtube-analytics-feedback.md](youtube-analytics-feedback.md) for source-retention
+thresholds and official metric definitions.
 
 Both layers are product adaptations, not evidence that the global ranker generalizes. Model release
 claims still require a separate, untouched video-level evaluation.

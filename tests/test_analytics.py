@@ -3,7 +3,11 @@ import zipfile
 
 import pytest
 
-from creatorcut.analytics import parse_youtube_analytics_export, performance_values
+from creatorcut.analytics import (
+    parse_analytics_export,
+    parse_youtube_analytics_export,
+    performance_values,
+)
 
 
 def youtube_zip(files):
@@ -83,3 +87,86 @@ def test_parse_retention_curve_preserves_rewatch_ratios_above_one():
 def test_parser_rejects_unrelated_csv():
     with pytest.raises(ValueError, match="supported YouTube analytics"):
         parse_youtube_analytics_export("other.csv", b"name,color\nexample,blue\n")
+
+
+def test_parse_tiktok_studio_metrics_into_platform_neutral_fields():
+    payload = (
+        b"Date,Video ID,Video views,Average watch time,Watched full video (%),"
+        b"Likes,Comments,Shares,New followers\n"
+        b"2026-09-01,tiktok-1,2400,00:00:18,42.5,190,14,31,8\n"
+    )
+
+    report = parse_analytics_export("tiktok", "content.csv", payload)
+    values = performance_values(report)
+
+    assert report["platform"] == "tiktok"
+    assert values["views"] == 2400
+    assert values["average_view_duration_seconds"] == pytest.approx(18.0)
+    assert values["completion_rate_percentage"] == pytest.approx(42.5)
+    assert values["follows"] == 8
+
+
+def test_parse_instagram_reels_metrics_including_reach_saves_and_replays():
+    payload = (
+        b"Media ID,Reel views,Accounts reached,Average watch time,"
+        b"Likes,Comments,Shares,Saves,Follows,Replays\n"
+        b"ig-1,1800,1200,00:00:12.5,120,9,34,27,6,210\n"
+    )
+
+    values = performance_values(
+        parse_analytics_export("instagram", "reels.csv", payload)
+    )
+
+    assert values["views"] == 1800
+    assert values["reach"] == 1200
+    assert values["saves"] == 27
+    assert values["replays"] == 210
+    assert values["average_view_duration_seconds"] == pytest.approx(12.5)
+
+
+def test_parse_text_and_clock_watch_time_durations():
+    tiktok = parse_analytics_export(
+        "tiktok",
+        "video.csv",
+        b"Video ID,Views,Total play time,Average watch time\nabc,1200,1h 5m 30s,00:12\n",
+    )
+    instagram = parse_analytics_export(
+        "instagram",
+        "reel.csv",
+        b"Reel ID,Plays,Total watch time,Average watch time\nabc,900,01:20:00,00:18\n",
+    )
+
+    assert tiktok["totals"]["watch_time_seconds"] == 3930
+    assert tiktok["totals"]["average_view_duration_seconds"] == 12
+    assert instagram["totals"]["watch_time_seconds"] == 4800
+    assert performance_values(instagram)["watch_time_hours"] == pytest.approx(4 / 3)
+
+
+def test_parse_google_sheets_xlsx_export():
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as archive:
+        archive.writestr(
+            "xl/workbook.xml",
+            """<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+            xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+            <sheets><sheet name="Reels" sheetId="1" r:id="rId1"/></sheets></workbook>""",
+        )
+        archive.writestr(
+            "xl/_rels/workbook.xml.rels",
+            """<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+            <Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>""",
+        )
+        archive.writestr(
+            "xl/worksheets/sheet1.xml",
+            """<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+            <sheetData>
+              <row r="1"><c r="A1" t="inlineStr"><is><t>Reel views</t></is></c>
+              <c r="B1" t="inlineStr"><is><t>Saves</t></is></c></row>
+              <row r="2"><c r="A2"><v>900</v></c><c r="B2"><v>23</v></c></row>
+            </sheetData></worksheet>""",
+        )
+
+    report = parse_analytics_export("instagram", "reels.xlsx", stream.getvalue())
+
+    assert report["totals"] == {"views": 900, "saves": 23}
+    assert report["source_files"] == ["reels-Reels.csv"]

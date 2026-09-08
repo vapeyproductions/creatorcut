@@ -14,8 +14,14 @@ const STATUS_COPY = {
   transcribing: [35, "Transcribing speech and locating sentence boundaries."],
   generating_candidates: [60, "Generating possible short clips."],
   ranking_candidates: [80, "Scoring candidates with the frozen ranker."],
-  ready: [100, "Three recommendations are ready."],
+  ready: [100, "Your platform recommendations are ready."],
   failed: [100, "Processing stopped."],
+};
+
+const PLATFORM_LABELS = {
+  youtube: "YouTube Shorts",
+  instagram: "Instagram Reels",
+  tiktok: "TikTok",
 };
 
 const elements = {
@@ -76,6 +82,21 @@ const elements = {
 };
 
 elements.modelReportButton.disabled = true;
+
+function syncPlatformPlanControls() {
+  for (const platform of Object.keys(PLATFORM_LABELS)) {
+    const checkbox = elements.uploadForm.elements[`platform_${platform}`];
+    const count = elements.uploadForm.elements[`count_${platform}`];
+    count.disabled = !checkbox.checked;
+    if (!checkbox.checked) count.value = "";
+  }
+}
+
+for (const platform of Object.keys(PLATFORM_LABELS)) {
+  const checkbox = elements.uploadForm.elements[`platform_${platform}`];
+  checkbox.addEventListener("change", syncPlatformPlanControls);
+}
+syncPlatformPlanControls();
 
 function showError(element, message) {
   element.textContent = message;
@@ -269,9 +290,12 @@ function renderResults(video) {
   setView("results");
   elements.clips.replaceChildren();
   const customClipCount = video.clips.filter((clip) => clip.origin === "creator").length;
-  elements.resultsTitle.textContent = customClipCount
-    ? `Three ranked clips + ${customClipCount} custom clip${customClipCount === 1 ? "" : "s"}`
-    : "Three clips, ranked";
+  const modelClipCount = video.clips.length - customClipCount;
+  const platformNames = [...new Set(video.clips.map((clip) => clip.platform || "youtube"))];
+  elements.resultsTitle.textContent =
+    `${modelClipCount} ranked clip${modelClipCount === 1 ? "" : "s"} for ` +
+    `${platformNames.length} platform${platformNames.length === 1 ? "" : "s"}` +
+    (customClipCount ? ` + ${customClipCount} custom` : "");
   elements.customSourceVideo.src = `/api/videos/${encodeURIComponent(video.id)}/source`;
   const customStart = elements.customClipForm.elements.start_seconds;
   const customEnd = elements.customClipForm.elements.end_seconds;
@@ -287,15 +311,36 @@ function renderResults(video) {
   const editorial = summary.personalization_active
     ? `Editorial preference: active from ${summary.decision_count} prior clip decisions.`
     : `Editorial preference: ${summary.decision_count}/${summary.editorial_minimum_decision_count} decisions recorded.`;
-  const outcomes = summary.performance_personalization_active
-    ? `Audience performance: active from ${summary.performance_eligible_clip_count} comparable Shorts.`
-    : `Audience performance: ${summary.performance_eligible_clip_count}/${summary.performance_minimum_clip_count} comparable Shorts eligible.`;
-  const semantics = summary.semantic_performance_active
-    ? `Semantic performance: active from ${summary.semantic_performance_example_count} transcript embeddings.`
-    : `Semantic performance: ${summary.semantic_performance_example_count}/${summary.performance_minimum_clip_count} eligible clips have embeddings.`;
-  elements.personalizationStatus.textContent = `${editorial}\n${outcomes}\n${semantics}`;
+  const platformLearning = Object.entries(summary.platform_performance || {})
+    .map(([platform, performance]) => {
+      const status = performance.active ? "active" : "waiting";
+      return `${PLATFORM_LABELS[platform]} audience model: ${status} ` +
+        `(${performance.eligible_clip_count}/${performance.minimum_clip_count} eligible clips).`;
+    })
+    .join("\n");
+  elements.personalizationStatus.textContent = `${editorial}\n${platformLearning}`;
   renderSemanticTrends(summary);
   renderSourceAnalytics(video.source_analytics);
+
+  const platformContainers = new Map();
+  for (const platform of platformNames) {
+    const section = document.createElement("section");
+    section.className = "platform-group";
+    const header = document.createElement("header");
+    const heading = document.createElement("h3");
+    heading.textContent = PLATFORM_LABELS[platform] || platform;
+    const detail = document.createElement("p");
+    const plan = video.clip_plan?.platforms?.[platform];
+    detail.textContent = plan
+      ? `${plan.delivered_count} delivered. Suggested range ${plan.suggested_range[0]}–${plan.suggested_range[1]}; ` +
+        `${plan.available_non_overlapping_count} distinct usable moments found. ` +
+        `${plan.profile.aspect_ratio}, ${plan.profile.generation_range_seconds[0]}–${plan.profile.generation_range_seconds[1]} second generation band.`
+      : "Creator-defined clips for this platform.";
+    header.append(heading, detail);
+    section.append(header);
+    elements.clips.append(section);
+    platformContainers.set(platform, section);
+  }
 
   for (const clip of video.clips) {
     const fragment = elements.clipTemplate.content.cloneNode(true);
@@ -303,12 +348,14 @@ function renderResults(video) {
     article.dataset.clipId = clip.id;
     const rankLabel = article.querySelector(".clip-rank");
     const rankValue = rankLabel.querySelector("strong");
+    article.querySelector(".clip-platform").textContent =
+      (PLATFORM_LABELS[clip.platform] || clip.platform || "YouTube Shorts").toUpperCase();
     if (clip.origin === "creator") {
       article.classList.add("creator-clip");
       rankLabel.childNodes[0].nodeValue = "CUSTOM CLIP ";
       rankValue.textContent = "";
     } else {
-      rankValue.textContent = clip.rank;
+      rankValue.textContent = clip.platform_rank || clip.rank;
     }
     article.querySelector(".clip-time").textContent =
       `${formatTime(clip.start_seconds)} — ${formatTime(clip.end_seconds)} / ${formatTime(clip.duration_seconds)}`;
@@ -335,6 +382,18 @@ function renderResults(video) {
     article.querySelector(".retention-adjustment").textContent = formatAdjustment(
       clip.source_retention_adjustment,
     );
+    article.querySelector(".platform-adjustment").textContent = formatAdjustment(
+      clip.platform_adjustment,
+    );
+    article.querySelector(".platform-score").textContent = Number(
+      clip.platform_score ?? clip.personalized_score,
+    ).toFixed(3);
+    const delivery = clip.multimodal_features || {};
+    const featureStatus = delivery.status === "unavailable" ? "unavailable" : null;
+    article.querySelector(".audio-urgency").textContent = featureStatus ||
+      `${Math.round(Number(delivery.audio_urgency_score ?? 0.5) * 100)}/100`;
+    article.querySelector(".visual-excitement").textContent = featureStatus ||
+      `${Math.round(Number(delivery.visual_excitement_score ?? 0.5) * 100)}/100`;
     const publishability = clip.publishability || {};
     const publishabilityReasons = (publishability.reasons || []).map(
       (reason) => reason.code.replaceAll("_", " "),
@@ -376,6 +435,11 @@ function renderResults(video) {
     startInput.max = (clip.start_seconds + 15).toFixed(1);
     endInput.min = Math.max(0, clip.end_seconds - 15).toFixed(1);
     endInput.max = Math.min(video.duration_seconds, clip.end_seconds + 15).toFixed(1);
+    article.querySelector("[name='export_format']").value = "vertical_captions";
+    article.querySelector(".clip-analytics-form [name='platform']").value =
+      clip.platform || "youtube";
+    article.querySelector(".performance-form [name='platform']").value =
+      clip.platform || "youtube";
 
     const refreshSelection = () => {
       videoElement.dataset.start = startInput.value;
@@ -405,7 +469,7 @@ function renderResults(video) {
     article.querySelector(".generate-posts-button").addEventListener("click", (event) =>
       generatePlatformPosts(article, clip, event.currentTarget),
     );
-    elements.clips.append(fragment);
+    platformContainers.get(clip.platform || "youtube").append(fragment);
   }
 }
 
@@ -589,6 +653,7 @@ elements.customClipForm.addEventListener("submit", async (event) => {
         body: JSON.stringify({
           start_seconds: Number(form.elements.start_seconds.value),
           end_seconds: Number(form.elements.end_seconds.value),
+          platform: form.elements.platform.value,
         }),
       },
     );
@@ -633,43 +698,39 @@ elements.finishReview.addEventListener("click", async () => {
 function renderSemanticTrends(summary) {
   elements.semanticTrends.replaceChildren();
   const heading = document.createElement("h3");
-  heading.textContent = "AUDIENCE PATTERN SUMMARY";
+  heading.textContent = "PLATFORM AUDIENCE PATTERNS";
   elements.semanticTrends.append(heading);
-  if (!summary.semantic_performance_active) {
-    const copy = document.createElement("p");
-    copy.textContent =
-      "Trends appear after five sufficiently viewed Shorts have both outcomes and saved transcript embeddings.";
-    elements.semanticTrends.append(copy);
-    return;
-  }
-  const insight = document.createElement("p");
-  insight.textContent =
-    summary.performance_insight_summary ||
-    "Performance adaptation is active, but no stable summary is available yet.";
-  elements.semanticTrends.append(insight);
-  const positive = summary.positive_semantic_trends || [];
-  const negative = summary.negative_semantic_trends || [];
-  if (!positive.length && !negative.length) {
-    const copy = document.createElement("p");
-    copy.textContent =
-      "Semantic matching is active, but no recurring word or phrase has a stable positive association yet.";
-    elements.semanticTrends.append(copy);
-    return;
-  }
-  for (const [label, trends] of [
-    ["STRONGER CLIP TERMS", positive],
-    ["WEAKER CLIP TERMS", negative],
-  ]) {
-    if (!trends.length) continue;
+  for (const [platform, performance] of Object.entries(summary.platform_performance || {})) {
     const subheading = document.createElement("h4");
-    subheading.textContent = label;
-    const list = document.createElement("ul");
-    for (const trend of trends) {
-      const item = document.createElement("li");
-      item.textContent = `${trend.term} (${trend.support} clips)`;
-      list.append(item);
+    subheading.textContent = (PLATFORM_LABELS[platform] || platform).toUpperCase();
+    elements.semanticTrends.append(subheading);
+    if (!performance.semantic_active) {
+      const copy = document.createElement("p");
+      copy.textContent =
+        `Waiting for ${performance.minimum_clip_count} sufficiently viewed clips with outcomes and transcript embeddings.`;
+      elements.semanticTrends.append(copy);
+      continue;
     }
-    elements.semanticTrends.append(subheading, list);
+    const insight = document.createElement("p");
+    insight.textContent =
+      performance.insight_summary ||
+      "Performance adaptation is active, but no stable summary is available yet.";
+    elements.semanticTrends.append(insight);
+    for (const [label, trends] of [
+      ["STRONGER TERMS", performance.positive_semantic_trends || []],
+      ["WEAKER TERMS", performance.negative_semantic_trends || []],
+    ]) {
+      if (!trends.length) continue;
+      const termHeading = document.createElement("h4");
+      termHeading.textContent = label;
+      const list = document.createElement("ul");
+      for (const trend of trends) {
+        const item = document.createElement("li");
+        item.textContent = `${trend.term} (${trend.support} clips)`;
+        list.append(item);
+      }
+      elements.semanticTrends.append(termHeading, list);
+    }
   }
 }
 
@@ -769,13 +830,18 @@ async function savePerformance(article, clip, event) {
   const message = article.querySelector(".clip-message");
   button.disabled = true;
   const averageValue = form.elements.average_view_percentage.value;
+  const completionValue = form.elements.completion_rate_percentage.value;
   const payload = {
     platform: form.elements.platform.value,
     views: optionalInteger(form, "views"),
     likes: optionalInteger(form, "likes"),
     comments: optionalInteger(form, "comments"),
     shares: optionalInteger(form, "shares"),
+    saves: optionalInteger(form, "saves"),
+    follows: optionalInteger(form, "follows"),
     average_view_percentage: averageValue === "" ? null : Number(averageValue),
+    completion_rate_percentage:
+      completionValue === "" ? null : Number(completionValue),
   };
   try {
     await request(`/api/clips/${encodeURIComponent(clip.id)}/performance`, {
@@ -796,6 +862,7 @@ elements.newVideo.addEventListener("click", () => {
   window.clearTimeout(state.pollTimer);
   state.video = null;
   elements.uploadForm.reset();
+  syncPlatformPlanControls();
   setView("upload");
   loadRecentVideos();
 });
@@ -877,18 +944,23 @@ function renderModelReport(report) {
     `${adaptation.decision_count} explicit decisions; activates at ${adaptation.editorial_minimum_decision_count}.`,
     "Maximum adjustment ±0.35.",
   );
-  renderAdaptationRow(
-    "Audience",
-    adaptation.performance_personalization_active ? "ACTIVE" : "WAITING",
-    `${adaptation.performance_eligible_clip_count}/${adaptation.performance_minimum_clip_count} comparable Shorts.`,
-    "Combined maximum ±0.25.",
-  );
-  renderAdaptationRow(
-    "Semantics",
-    adaptation.semantic_performance_active ? "ACTIVE" : "WAITING",
-    `${adaptation.semantic_performance_example_count}/${adaptation.performance_minimum_clip_count} outcome-linked embeddings.`,
-    "Maximum component ±0.15.",
-  );
+  for (const [platform, performance] of Object.entries(
+    adaptation.platform_performance || {},
+  )) {
+    const label = PLATFORM_LABELS[platform] || platform;
+    renderAdaptationRow(
+      `${label} audience`,
+      performance.active ? "ACTIVE" : "WAITING",
+      `${performance.eligible_clip_count}/${performance.minimum_clip_count} comparable published clips.`,
+      "Combined maximum ±0.25.",
+    );
+    renderAdaptationRow(
+      `${label} semantics`,
+      performance.semantic_active ? "ACTIVE" : "WAITING",
+      `${performance.semantic_example_count}/${performance.minimum_clip_count} outcome-linked embeddings.`,
+      "Maximum component ±0.15.",
+    );
+  }
 
   elements.operationsList.replaceChildren();
   appendDefinition(
@@ -978,6 +1050,7 @@ function renderModelReport(report) {
     ["Structured performance", "performance"],
     ["Semantic performance", "semantic"],
     ["Source retention", "retention"],
+    ["Platform prior", "platform"],
   ];
   elements.adjustmentList.replaceChildren();
   for (const [label, key] of adjustmentLabels) {
@@ -1007,7 +1080,7 @@ function renderModelReport(report) {
       for (const value of [
         event.event_type.replaceAll("_", " "),
         event.original_filename,
-        `${event.origin} #${event.rank}`,
+        `${PLATFORM_LABELS[event.platform] || event.platform} · ${event.origin} #${event.platform_rank || event.rank}`,
         interval,
         formatRecordedAt(event.created_at),
       ]) {

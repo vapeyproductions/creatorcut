@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>CreatorCut — ranked clips that improve with evidence</title>
+    <title>CreatorCut — platform-aware clips that improve with evidence</title>
     <meta
       name="description"
-      content="Upload a long video, receive three explainable short-form clips, and turn creator choices and audience outcomes into controlled personalization."
+      content="Use multimodal ML to rank long-form video clips for YouTube Shorts, Instagram Reels, and TikTok, then improve predictions with creator analytics."
     />
     <link rel="stylesheet" href="/assets/product.css" />
   </head>
@@ -17,7 +17,7 @@
         <span>FROZEN RELEASE V1</span>
       </div>
       <div class="masthead-actions">
-        <p>One long video in. Three ranked clips out.</p>
+        <p>One long video in. Platform-ranked clips out.</p>
         <a id="admin-link" class="plain-link" href="/admin" hidden>ML OBSERVATORY</a>
         <button id="model-report-button" class="plain-button" type="button" disabled>MODEL REPORT</button>
         <span id="account-label" class="account-label" hidden></span>
@@ -30,8 +30,8 @@
         <p class="section-number">ACCOUNT ACCESS</p>
         <h1 id="auth-title">Turn one video into three strong clips</h1>
         <p class="auth-intro">
-          Sign in to upload a video, review ranked recommendations, and help CreatorCut
-          improve from your choices.
+          Use advanced ML models to predict the strongest clips from your long-form content.
+          CreatorCut learns from your editing choices and audience outcomes.
         </p>
         <div class="auth-grid">
           <form id="login-form" class="auth-form">
@@ -70,12 +70,32 @@
             required
           />
 
+          <fieldset class="platform-plan">
+            <legend>Choose output platforms and clip counts</legend>
+            <p class="field-note">
+              Leave a count blank for CreatorCut to recommend a useful number after it measures
+              distinct, non-overlapping moments.
+            </p>
+            <div class="platform-plan-row">
+              <label><input name="platform_youtube" type="checkbox" checked /> YouTube Shorts</label>
+              <label>Clips <input name="count_youtube" type="number" min="1" max="8" step="1" placeholder="Auto" /></label>
+            </div>
+            <div class="platform-plan-row">
+              <label><input name="platform_instagram" type="checkbox" /> Instagram Reels</label>
+              <label>Clips <input name="count_instagram" type="number" min="1" max="8" step="1" placeholder="Auto" disabled /></label>
+            </div>
+            <div class="platform-plan-row">
+              <label><input name="platform_tiktok" type="checkbox" /> TikTok</label>
+              <label>Clips <input name="count_tiktok" type="number" min="1" max="8" step="1" placeholder="Auto" disabled /></label>
+            </div>
+          </fieldset>
+
           <label for="source-analytics">Source analytics <span>(optional)</span></label>
           <input
             id="source-analytics"
             name="source_analytics"
             type="file"
-            accept=".zip,.csv,text/csv,application/zip"
+            accept=".zip,.csv,.tsv,.xlsx,text/csv,text/tab-separated-values,application/zip,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           />
 
           <button id="upload-button" type="submit">PROCESS VIDEO</button>
@@ -84,7 +104,7 @@
         <p class="small-print">
           Files and feedback stay on this computer in the current build. Processing can take
           several minutes because transcription and ranking run locally. If this video has
-          already been published, its YouTube retention export can inform the ranking when the
+          already been published on YouTube, its retention export can inform the ranking when the
           report has enough traffic.
         </p>
         <details class="system-details">
@@ -114,7 +134,7 @@
         <div class="results-heading">
           <div>
             <p class="section-number">03 / RECOMMENDATIONS</p>
-            <h2 id="results-title">Three clips, ranked</h2>
+            <h2 id="results-title">Platform-ranked clips</h2>
           </div>
           <button id="new-video-button" class="plain-button" type="button">PROCESS ANOTHER VIDEO</button>
         </div>
@@ -126,7 +146,7 @@
           <form id="source-analytics-form" class="analytics-form">
             <label>
               YouTube Studio ZIP or CSV
-              <input name="analytics" type="file" accept=".zip,.csv,text/csv,application/zip" required />
+              <input name="analytics" type="file" accept=".zip,.csv,.tsv,.xlsx,text/csv,text/tab-separated-values,application/zip,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required />
             </label>
             <button type="submit">IMPORT SOURCE ANALYTICS</button>
           </form>
@@ -145,6 +165,14 @@
               <label>Start <input name="start_seconds" type="number" min="0" step="0.1" required /></label>
               <label>End <input name="end_seconds" type="number" min="0" step="0.1" required /></label>
             </div>
+            <label>
+              Platform
+              <select name="platform">
+                <option value="youtube">YouTube Shorts</option>
+                <option value="instagram">Instagram Reels</option>
+                <option value="tiktok">TikTok</option>
+              </select>
+            </label>
             <div class="custom-time-buttons">
               <button id="use-current-start" class="plain-button" type="button">USE CURRENT TIME AS START</button>
               <button id="use-current-end" class="plain-button" type="button">USE CURRENT TIME AS END</button>
@@ -244,7 +272,7 @@
     <template id="clip-template">
       <article class="clip-result">
         <header>
-          <p class="clip-rank">RANK <strong></strong></p>
+          <div><p class="clip-platform"></p><p class="clip-rank">RANK <strong></strong></p></div>
           <p class="clip-time"></p>
         </header>
         <div class="clip-columns">
@@ -264,6 +292,10 @@
                 <div><dt>Performance metrics</dt><dd class="performance-adjustment"></dd></div>
                 <div><dt>Semantic/topic match</dt><dd class="semantic-adjustment"></dd></div>
                 <div><dt>Source retention</dt><dd class="retention-adjustment"></dd></div>
+                <div><dt>Platform fit</dt><dd class="platform-adjustment"></dd></div>
+                <div><dt>Platform score</dt><dd class="platform-score"></dd></div>
+                <div><dt>Audio urgency</dt><dd class="audio-urgency"></dd></div>
+                <div><dt>Visual excitement</dt><dd class="visual-excitement"></dd></div>
                 <div><dt>Publishability gate</dt><dd class="publishability-check"></dd></div>
                 <div><dt>Publishability adjustment</dt><dd class="publishability-adjustment"></dd></div>
               </dl>
@@ -311,10 +343,18 @@
               <summary>Posted it? Import its performance</summary>
               <form class="analytics-form clip-analytics-form">
                 <label>
-                  YouTube Studio ZIP or CSV
-                  <input name="analytics" type="file" accept=".zip,.csv,text/csv,application/zip" required />
+                  Platform
+                  <select name="platform">
+                    <option value="youtube">YouTube Shorts</option>
+                    <option value="instagram">Instagram Reels</option>
+                    <option value="tiktok">TikTok</option>
+                  </select>
                 </label>
-                <button type="submit">IMPORT YOUTUBE ANALYTICS</button>
+                <label>
+                  Creator analytics CSV, TSV, XLSX, or ZIP
+                  <input name="analytics" type="file" accept=".zip,.csv,.tsv,.xlsx,text/csv,text/tab-separated-values,application/zip,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required />
+                </label>
+                <button type="submit">IMPORT PLATFORM ANALYTICS</button>
               </form>
               <p class="analytics-note">
                 The report is matched to this clip. Low-traffic reports are stored but cannot
@@ -332,9 +372,12 @@
                 </label>
                 <label>Views <input name="views" type="number" min="0" step="1" /></label>
                 <label>Average viewed % <input name="average_view_percentage" type="number" min="0" max="100" step="0.1" /></label>
+                <label>Completed video % <input name="completion_rate_percentage" type="number" min="0" max="100" step="0.1" /></label>
                 <label>Likes <input name="likes" type="number" min="0" step="1" /></label>
                 <label>Comments <input name="comments" type="number" min="0" step="1" /></label>
                 <label>Shares <input name="shares" type="number" min="0" step="1" /></label>
+                <label>Saves <input name="saves" type="number" min="0" step="1" /></label>
+                <label>Follows <input name="follows" type="number" min="0" step="1" /></label>
                 <button type="submit">SAVE PERFORMANCE</button>
               </form>
             </details>

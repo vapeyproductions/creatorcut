@@ -9,14 +9,16 @@ Rather than treating clip selection as an opaque generative-AI task, CreatorCut 
 1. Create a private creator account or sign in.
 2. Upload a long-form MP4, MOV, M4V, or WebM video.
 3. Transcribe it with word timestamps and generate sentence-aligned candidates.
-4. Generate candidate short-form clips.
-5. Rank candidates using an explainable ML model.
-6. Preview and adjust the three recommended intervals.
+4. Choose YouTube Shorts, Instagram Reels, TikTok, or any combination, then request a clip count
+   or let CreatorCut estimate a non-overlapping range.
+5. Rank candidates with the frozen global model, production audio/visual descriptors, and a
+   separately learned creator-and-platform outcome layer.
+6. Preview and adjust the ranked intervals for each platform.
 7. Export the source aspect ratio, a subject-aware vertical 9:16 crop, or a vertical clip with
    burned captions.
 8. Generate editable, transcript-grounded posts for four platforms.
-9. Capture editorial decisions, post-copy edits, and optional YouTube analytics for bounded feature and semantic
-   personalization.
+9. Capture editorial decisions, post-copy edits, and optional YouTube, Instagram, or TikTok
+   analytics for bounded feature and semantic personalization.
 
 ## ML system
 
@@ -75,7 +77,7 @@ creatorcut-account promote-admin --email creator@example.com
 ```
 
 The product then links to `/admin`, where offline holdout evidence is shown separately from live
-selection, rank, clip-length, boundary-edit, input-format, YouTube analytics-coverage, account, and
+selection, rank, clip-length, boundary-edit, input-format, per-platform analytics coverage, account, and
 job-state signals. Both the page and its data endpoint require an authenticated administrator.
 See [docs/admin-ml-observatory.md](docs/admin-ml-observatory.md).
 
@@ -113,18 +115,19 @@ does not match the artifact and runtime.
 
 The product surface accepts an uploaded video, runs durable local transcription and frozen-model ranking,
 removes high-confidence ads/music-only intervals through a versioned publishability gate, returns
-three non-duplicative recommendations, exposes global and adaptive score evidence, and
+platform-specific non-duplicative recommendations, exposes global and adaptive score evidence, and
 creates frame-accurate MP4 downloads. A creator may adjust either boundary by up to 15 seconds,
 choose source-ratio or face-tracked 9:16 captioned export, reject a recommendation, or define a custom
 interval. Finishing a review explicitly records untouched model options as weak unselected evidence;
 ordinary missing clicks stay unlabeled. The SQLite store keeps presentations, choices, exact edits,
-custom intervals, model lineage, and post-publication outcomes as separate records. YouTube Studio
-ZIP/CSV exports can be attached to the source video or a published Short; insufficient reports are
-saved without influencing ranking. After enough comparable Shorts, the product learns both
+custom intervals, model lineage, and post-publication outcomes as separate records. YouTube Studio,
+Instagram, and TikTok CSV/TSV/XLSX/ZIP exports can be attached to a published clip; YouTube
+source-video exports can additionally provide timestamped retention evidence. Insufficient reports
+are saved without influencing ranking. After enough comparable clips on one platform, the product learns both
 interpretable quality preferences and similarity to semantically related high-performing clips,
 then displays an evidence-derived summary and recurring stronger/weaker terms. See
 [docs/personalization-and-feedback.md](docs/personalization-and-feedback.md) and
-[docs/youtube-analytics-feedback.md](docs/youtube-analytics-feedback.md). The safety/quality split and
+[docs/platform-aware-ranking.md](docs/platform-aware-ranking.md). The safety/quality split and
 its current evidence limits are documented in
 [docs/publishability-gate.md](docs/publishability-gate.md). Runtime data contracts,
 event semantics, model lineage, and the local-to-hosted boundary are documented in

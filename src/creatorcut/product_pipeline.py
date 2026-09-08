@@ -17,8 +17,16 @@ from creatorcut.candidates import (
     interval_iou,
     words_to_sentence_units,
 )
+from creatorcut.delivery import DELIVERY_FEATURE_SCHEMA, extract_candidate_delivery_features
 from creatorcut.holdout import score_frozen_model
 from creatorcut.media import inspect_media
+from creatorcut.platforms import (
+    PLATFORM_PROFILES,
+    attach_platform_scores,
+    explain_platform_fit,
+    plan_platform_clips,
+    validate_clip_plan,
+)
 from creatorcut.product_store import ProductStore
 from creatorcut.publishability import (
     attach_publishability,
@@ -38,6 +46,7 @@ from creatorcut.training import candidate_model_features
 from creatorcut.transcription import transcribe_video
 
 MAXIMUM_CANDIDATES_TO_EMBED = 1_200
+MAXIMUM_CANDIDATES_FOR_DELIVERY = 200
 MAXIMUM_EXPORT_ADJUSTMENT_SECONDS = 15.0
 MINIMUM_EXPORT_DURATION_SECONDS = 5.0
 MAXIMUM_EXPORT_DURATION_SECONDS = 90.0
@@ -125,6 +134,49 @@ def select_diverse_top_clips(
         candidate for candidate in ordered if candidate["candidate_id"] not in selected_ids
     )
     return selected[:count]
+
+
+def select_multimodal_candidates(
+    candidates: list[dict[str, Any]], limit: int = MAXIMUM_CANDIDATES_FOR_DELIVERY
+) -> list[dict[str, Any]]:
+    """Bound media feature work while preserving strong clips and source-wide coverage."""
+    if limit < 1:
+        raise ValueError("The multimodal candidate limit must be positive")
+    if len(candidates) <= limit:
+        return candidates
+    ordered = sorted(
+        candidates,
+        key=lambda candidate: (-float(candidate["global_score"]), candidate["candidate_id"]),
+    )
+    top_count = max(1, round(limit * 0.75))
+    selected = ordered[:top_count]
+    selected_ids = {candidate["candidate_id"] for candidate in selected}
+    remaining = [
+        candidate
+        for candidate in candidates
+        if candidate["candidate_id"] not in selected_ids
+    ]
+    if len(selected) >= limit:
+        return selected[:limit]
+    maximum_start = max(float(candidate["start_seconds"]) for candidate in candidates) or 1.0
+    bucket_count = min(20, limit - len(selected))
+    buckets: list[list[dict[str, Any]]] = [[] for _ in range(bucket_count)]
+    for candidate in remaining:
+        bucket = min(
+            bucket_count - 1,
+            int(float(candidate["start_seconds"]) / maximum_start * bucket_count),
+        )
+        buckets[bucket].append(candidate)
+    for bucket in buckets:
+        bucket.sort(
+            key=lambda candidate: (-float(candidate["global_score"]), candidate["candidate_id"])
+        )
+        selected.extend(bucket[:1])
+    selected_ids = {candidate["candidate_id"] for candidate in selected}
+    selected.extend(
+        candidate for candidate in ordered if candidate["candidate_id"] not in selected_ids
+    )
+    return selected[:limit]
 
 
 def explain_prediction(predicted_targets: dict[str, float]) -> str:
@@ -555,8 +607,8 @@ class ProductProcessor:
                 for word in segment.get("words", [])
             ]
             candidates = generate_candidates(video_id, words_to_sentence_units(words))
-            if len(candidates) < 3:
-                raise ValueError("The video did not contain enough spoken content for three clips")
+            if not candidates:
+                raise ValueError("The video did not contain a usable spoken clip")
             assessed_candidates = [attach_publishability(candidate) for candidate in candidates]
             self.store.save_video_publishability_summary(
                 video_id, summarize_publishability_batch(assessed_candidates)
@@ -566,10 +618,10 @@ class ProductProcessor:
                 for candidate in assessed_candidates
                 if candidate["publishability"]["eligible"]
             ]
-            if len(candidates) < 3:
+            if not candidates:
                 blocked_count = len(assessed_candidates) - len(candidates)
                 raise ValueError(
-                    "The publishability gate left fewer than three safe spoken clips "
+                    "The publishability gate did not leave a safe spoken clip "
                     f"({blocked_count} candidates were blocked)"
                 )
             candidates = prefilter_candidates(candidates)
@@ -646,36 +698,83 @@ class ProductProcessor:
                 for candidate in scored
             ]
             video = self.store.get_video(video_id)
-            personalized, _ = self.store.personalize_candidates(video["creator_id"], scored)
-            personalized, _ = self.store.apply_source_retention_signal(
-                video_id, personalized
-            )
-            personalized = [
+            scored = select_multimodal_candidates(scored)
+            try:
+                delivery_by_candidate = extract_candidate_delivery_features(
+                    source_path, scored
+                )
+            except Exception:
+                delivery_by_candidate = {
+                    candidate["candidate_id"]: {
+                        "schema": DELIVERY_FEATURE_SCHEMA,
+                        "status": "unavailable",
+                        "audio_urgency_score": 0.5,
+                        "visual_excitement_score": 0.5,
+                    }
+                    for candidate in scored
+                }
+            scored = [
                 {
                     **candidate,
-                    "personalized_score": float(candidate["personalized_score"])
-                    + float(candidate["publishability_adjustment"]),
+                    "multimodal_features": delivery_by_candidate[candidate["candidate_id"]],
                 }
-                for candidate in personalized
+                for candidate in scored
             ]
-            selected = select_diverse_top_clips(personalized)
-            ranked = []
-            for rank, clip in enumerate(selected, start=1):
-                ranked.append(
-                    {
-                        **clip,
-                        "id": f"{video_id}_clip_{rank}",
-                        "rank": rank,
-                        "ranking_model_version": frozen_model.get(
-                            "freeze_schema", "unversioned_frozen_model"
-                        ),
-                        "explanation": (
-                            explain_prediction(clip["predicted_targets"])
-                            + " "
-                            + publishability_summary(clip["publishability"])
-                        ),
-                    }
+            requested_plan = video.get("clip_plan", {})
+            if not requested_plan.get("platforms"):
+                requested_plan = validate_clip_plan({"youtube": None})
+            resolved_plan = {
+                **requested_plan,
+                "platforms": {},
+                "source_duration_seconds": media_duration,
+            }
+            ranked: list[dict[str, Any]] = []
+            storage_rank = 1
+            for platform, request in requested_plan["platforms"].items():
+                personalized, _ = self.store.personalize_candidates(
+                    video["creator_id"], scored, platform
                 )
+                personalized, _ = self.store.apply_source_retention_signal(
+                    video_id, personalized
+                )
+                personalized = [
+                    {
+                        **candidate,
+                        "personalized_score": float(candidate["personalized_score"])
+                        + float(candidate["publishability_adjustment"]),
+                    }
+                    for candidate in personalized
+                ]
+                selected, plan = plan_platform_clips(
+                    personalized,
+                    platform,
+                    media_duration,
+                    request.get("requested_count"),
+                )
+                resolved_plan["platforms"][platform] = plan
+                for platform_rank, clip in enumerate(selected, start=1):
+                    ranked.append(
+                        {
+                            **clip,
+                            "id": f"{video_id}_{platform}_clip_{platform_rank}",
+                            "rank": storage_rank,
+                            "platform_rank": platform_rank,
+                            "ranking_model_version": frozen_model.get(
+                                "freeze_schema", "unversioned_frozen_model"
+                            ),
+                            "explanation": (
+                                explain_prediction(clip["predicted_targets"])
+                                + " "
+                                + explain_platform_fit(clip)
+                                + " "
+                                + publishability_summary(clip["publishability"])
+                            ),
+                        }
+                    )
+                    storage_rank += 1
+            if not ranked:
+                raise ValueError("No distinct publishable clips were available for this plan")
+            self.store.save_video_clip_plan(video_id, resolved_plan)
             self.store.save_ranked_clips(video_id, ranked)
             self.store.update_video(video_id, "ready")
         except Exception as error:  # background failures must become visible job state
@@ -683,7 +782,11 @@ class ProductProcessor:
             raise
 
     def create_custom_clip(
-        self, video_id: str, start_seconds: float, end_seconds: float
+        self,
+        video_id: str,
+        start_seconds: float,
+        end_seconds: float,
+        platform: str = "youtube",
     ) -> str:
         """Score and persist a creator-authored interval as explicit preference evidence."""
         self.require_frozen_serving_release()
@@ -745,21 +848,33 @@ class ProductProcessor:
             "semantic_embedding": embeddings[0].astype(float).tolist(),
             "global_score": prediction["predicted_quality_score"],
             "predicted_targets": prediction["predicted_targets"],
+            "multimodal_features": {
+                "schema": DELIVERY_FEATURE_SCHEMA,
+                "status": "not_extracted_for_custom_interval",
+                "audio_urgency_score": 0.5,
+                "visual_excitement_score": 0.5,
+            },
         }
         candidate = attach_publishability(candidate)
         personalized, _ = self.store.personalize_candidates(
-            video["creator_id"], [candidate]
+            video["creator_id"], [candidate], platform
         )
         adjusted, _ = self.store.apply_source_retention_signal(video_id, personalized)
-        clip = {
+        prepared = {
             **adjusted[0],
             "personalized_score": float(adjusted[0]["personalized_score"])
             + float(adjusted[0]["publishability_adjustment"]),
+        }
+        clip = {
+            **attach_platform_scores([prepared], platform)[0],
+            "platform": platform,
+            "platform_rank": None,
             "ranking_model_version": frozen_model.get(
                 "freeze_schema", "unversioned_frozen_model"
             ),
             "explanation": (
-                "Creator-defined interval. Scored for evidence, not selected by the model."
+                "Creator-defined interval. Scored for evidence, not selected by the model. "
+                + f"Saved for {PLATFORM_PROFILES[platform]['label']}."
             ),
         }
         return self.store.save_custom_clip(video_id, clip)

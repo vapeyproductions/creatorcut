@@ -13,13 +13,13 @@ upload
   -> word-timestamped transcription
   -> sentence-aligned candidate generation
   -> versioned publishability gate
-  -> frozen transcript embedding + handcrafted features
+  -> frozen transcript embedding + production audio/visual delivery descriptors
   -> frozen global quality predictions
-  -> editorial + performance + semantic + source-retention adjustments
-  -> diverse top-three selection
+  -> creator editorial + per-platform performance + semantic + source-retention adjustments
+  -> platform prior + diverse requested/automatic clip-count planning
   -> preview / edit / subject-aware export / reject / custom alternative
   -> transcript-grounded platform posts + exact copy feedback
-  -> optional YouTube outcome import
+  -> optional YouTube / Instagram / TikTok outcome import
 ```
 
 Processing runs through a persistent job queue so multiple uploads cannot compete for the local ASR
@@ -55,7 +55,7 @@ creator can download the same integrity-hashed feedback snapshot used at the off
 boundary directly from the report.
 
 An opt-in local administrator observatory aggregates model impressions, choices by displayed rank,
-clip/source duration distributions, boundary corrections, file and export formats, analytics-field
+clip/source duration distributions, boundary corrections, file and export formats, per-platform analytics-field
 coverage, processing jobs, and per-account denominators. It keeps frozen offline evaluation
 separate from live behavioral signals and omits transcripts, media paths, and raw analytics rows.
 The route is disabled by default because a public version requires administrator authentication.
@@ -98,6 +98,7 @@ Each persisted clip records:
 - frozen model version;
 - predicted hook, completeness, payoff, and clarity;
 - global candidate rank and global score;
+- platform, platform rank, platform prior, and compact audio/visual delivery descriptors;
 - publishability, editorial, structured-performance, semantic-performance, and source-retention adjustments;
 - final personalized score and explanation.
 
@@ -130,15 +131,15 @@ This creates an inspectable boundary between the serving database and future off
 
 ## Online adaptation
 
-The global model remains frozen. Product feedback affects only bounded creator-specific layers:
+The global model remains frozen. Product feedback affects only bounded creator-and-platform-specific layers:
 
 - editorial preference: activates after three explicit clip decisions; cap ±0.35;
-- structured audience preference: at least five sufficiently viewed Shorts; component cap ±0.15;
+- structured audience preference: at least five sufficiently viewed clips for that platform; component cap ±0.15;
 - semantic audience similarity: at least five outcome-linked embeddings; component cap ±0.15;
 - combined audience adjustment: cap ±0.25;
 - source-video retention: at least 100 views and ten retention points; cap ±0.20.
 
-All audience targets are within-creator percentiles. Raw views are exposure, never the quality
+All audience targets are within-creator, within-platform percentiles. Raw views are exposure, never the quality
 label. The semantic layer uses similarity-weighted outcomes from frozen transcript embeddings; the
 visible recurring terms explain the history but do not define semantic similarity.
 

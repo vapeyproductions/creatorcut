@@ -19,6 +19,7 @@ const elements = {
   eventCounts: document.querySelector("#event-counts"),
   sourceTypes: document.querySelector("#source-types"),
   clipOrigins: document.querySelector("#clip-origins"),
+  clipPlatforms: document.querySelector("#clip-platforms"),
   sourceDuration: document.querySelector("#source-duration"),
   clipDuration: document.querySelector("#clip-duration"),
   selectedDuration: document.querySelector("#selected-duration"),
@@ -28,6 +29,8 @@ const elements = {
   endEdits: document.querySelector("#end-edits"),
   totalEdits: document.querySelector("#total-edits"),
   analyticsRoles: document.querySelector("#analytics-roles"),
+  analyticsPlatforms: document.querySelector("#analytics-platforms"),
+  performancePlatforms: document.querySelector("#performance-platforms"),
   analyticsTypes: document.querySelector("#analytics-types"),
   analyticsFiles: document.querySelector("#analytics-files"),
   analyticsMetrics: document.querySelector("#analytics-metrics"),
@@ -132,6 +135,7 @@ function renderReport(report) {
   renderCounts(elements.eventCounts, report.model_behavior.event_counts);
   renderCounts(elements.sourceTypes, report.media.source_file_types);
   renderCounts(elements.clipOrigins, report.media.clip_origins);
+  renderCounts(elements.clipPlatforms, report.media.clip_platforms);
   renderDistribution(elements.sourceDuration, report.media.source_duration_seconds, "seconds");
   renderDistribution(elements.clipDuration, report.media.clip_duration_seconds, "seconds");
   renderDistribution(elements.selectedDuration, report.media.selected_duration_seconds, "seconds");
@@ -141,6 +145,8 @@ function renderReport(report) {
   renderDistribution(elements.endEdits, report.editing.absolute_end_change_seconds, "seconds");
   renderDistribution(elements.totalEdits, report.editing.total_boundary_change_seconds, "seconds");
   renderCounts(elements.analyticsRoles, report.analytics.report_roles);
+  renderCounts(elements.analyticsPlatforms, report.analytics.platforms);
+  renderCounts(elements.performancePlatforms, report.analytics.performance_platforms);
   renderCounts(elements.analyticsTypes, report.analytics.report_types);
   renderCounts(elements.analyticsFiles, report.analytics.file_types);
   renderCounts(elements.analyticsMetrics, report.analytics.metric_coverage);
@@ -207,8 +213,8 @@ function renderReport(report) {
         account.median_total_boundary_change_seconds === null
           ? "—"
           : `${number(account.median_total_boundary_change_seconds)}s`,
-        account.analytics_import_count,
-        account.performance_report_count,
+        `${account.analytics_import_count}\n${formatCounts(account.analytics_platform_counts)}`,
+        `${account.performance_report_count}\n${formatCounts(account.performance_platform_counts)}`,
       ]) {
         const cell = document.createElement("td");
         cell.textContent = value;

@@ -33,9 +33,9 @@ The live sections aggregate operational evidence across creator profiles:
 - model clips presented, selected, rejected, and selected by displayed rank;
 - proposed clip and source-video duration distributions;
 - exact start, end, and total boundary-correction distributions;
-- source file types, custom/model clip origins, and export formats;
-- YouTube analytics import roles, report types, recognized rows, retention-point counts, and
-  metric availability;
+- source file types, custom/model clip origins, clip platforms, and export formats;
+- YouTube, Instagram, and TikTok analytics imports and outcomes by platform, report type,
+  recognized rows, retention-point counts, and metric availability;
 - post-copy choices by action and platform;
 - persistent processing-job states and retry counts;
 - a per-account coverage table.

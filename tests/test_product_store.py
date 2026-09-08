@@ -61,7 +61,8 @@ def test_store_persists_upload_clips_and_presentations(tmp_path):
     assert saved["creator_id"] == creator["id"]
     assert saved["status"] == "ready"
     assert [clip["id"] for clip in saved["clips"]] == [clip["id"] for clip in clips]
-    assert store.creator_summary(creator["id"]) == {
+    summary = store.creator_summary(creator["id"])
+    assert {key: value for key, value in summary.items() if key != "platform_performance"} == {
         "decision_count": 0,
         "editorial_minimum_decision_count": 3,
         "performance_report_count": 0,
@@ -76,6 +77,10 @@ def test_store_persists_upload_clips_and_presentations(tmp_path):
         "negative_semantic_trends": [],
         "performance_insight_summary": None,
     }
+    assert set(summary["platform_performance"]) == {"youtube", "instagram", "tiktok"}
+    assert not any(
+        profile["active"] for profile in summary["platform_performance"].values()
+    )
     assert [item["id"] for item in store.list_videos(creator["id"])] == [video["id"]]
     assert "semantic_embedding_json" not in saved["clips"][0]
     assert json.loads(store.get_clip(clips[0]["id"])["semantic_embedding_json"])
@@ -650,7 +655,9 @@ def test_performance_layer_learns_only_after_five_comparable_shorts(tmp_path):
     )
     summary = store.creator_summary(creator["id"])
     assert summary["semantic_performance_active"] is True
-    assert summary["performance_insight_summary"].startswith("Across 5 eligible Shorts")
+    assert summary["performance_insight_summary"].startswith(
+        "Across 5 eligible clips on this platform"
+    )
     assert any(
         trend["term"] == "pricing strategy"
         for trend in summary["positive_semantic_trends"]
@@ -659,6 +666,64 @@ def test_performance_layer_learns_only_after_five_comparable_shorts(tmp_path):
         trend["term"] == "general introduction"
         for trend in summary["negative_semantic_trends"]
     )
+
+
+def test_performance_learning_is_isolated_by_platform(tmp_path):
+    store, creator, _, clips = populated_store(tmp_path)
+    all_clips = list(clips)
+    source = tmp_path / "platform-isolation.mp4"
+    source.touch()
+    second_video = store.create_video(creator["id"], source.name, source)
+    store.update_video(second_video["id"], "ranking_candidates", duration_seconds=180.0)
+    extra = [ranked_clip(rank, hook, 20.0 * rank) for rank, hook in ((1, 2.0), (2, 4.0))]
+    for clip in extra:
+        clip["id"] = f"{second_video['id']}_clip_{clip['rank']}"
+    store.save_ranked_clips(second_video["id"], extra)
+    all_clips.extend(extra)
+
+    for index, clip in enumerate(all_clips):
+        store.save_performance_report(
+            clip["id"],
+            {
+                "platform": "instagram",
+                "views": 500,
+                "average_view_percentage": 45 + index * 8,
+                "saves": 3 + index,
+                "follows": index,
+                "published_at": None,
+            },
+        )
+
+    candidate = {
+        "candidate_id": "new",
+        "duration_seconds": 30.0,
+        "global_score": 3.5,
+        "semantic_embedding": [0.0, 1.0],
+        "multimodal_features": {
+            "audio_urgency_score": 0.8,
+            "visual_excitement_score": 0.9,
+        },
+        "predicted_targets": {
+            "hook": 5.0,
+            "completeness": 4.0,
+            "payoff": 4.0,
+            "clarity": 4.0,
+        },
+    }
+
+    _, instagram = store.personalize_candidates(
+        creator["id"], [candidate], platform="instagram"
+    )
+    _, youtube = store.personalize_candidates(
+        creator["id"], [candidate], platform="youtube"
+    )
+
+    assert instagram["performance"]["active"] is True
+    assert instagram["performance"]["eligible_clip_count"] == 5
+    assert youtube["performance"]["active"] is False
+    assert youtube["performance"]["eligible_clip_count"] == 0
+    report = store.admin_ml_report()
+    assert report["analytics"]["performance_platforms"] == {"instagram": 5}
 
 
 def test_store_rejects_unknown_editorial_event(tmp_path):

@@ -19,9 +19,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from creatorcut.analytics import MAXIMUM_ANALYTICS_BYTES, parse_youtube_analytics_export
+from creatorcut.analytics import MAXIMUM_ANALYTICS_BYTES, parse_analytics_export
 from creatorcut.annotation_app import parse_byte_range
 from creatorcut.feedback_export import build_feedback_snapshot
+from creatorcut.platforms import SUPPORTED_PLATFORMS, validate_clip_plan
 from creatorcut.product_pipeline import ProductProcessor, validate_export_interval
 from creatorcut.product_store import ProductStore
 from creatorcut.product_worker import ProcessingWorker
@@ -46,7 +47,17 @@ def validate_performance_report(value: Any) -> dict[str, Any]:
     if platform not in {"tiktok", "instagram", "youtube", "other"}:
         raise ValueError("Choose a supported platform")
     normalized: dict[str, Any] = {"platform": platform}
-    for field in ("views", "likes", "comments", "shares"):
+    for field in (
+        "views",
+        "likes",
+        "comments",
+        "shares",
+        "saves",
+        "reach",
+        "follows",
+        "profile_visits",
+        "replays",
+    ):
         metric = value.get(field)
         if metric in (None, ""):
             normalized[field] = None
@@ -54,24 +65,37 @@ def validate_performance_report(value: Any) -> dict[str, Any]:
             raise ValueError(f"{field} must be a non-negative whole number")
         else:
             normalized[field] = metric
-    average = value.get("average_view_percentage")
-    if average in (None, ""):
-        normalized["average_view_percentage"] = None
-    elif (
-        isinstance(average, bool)
-        or not isinstance(average, int | float)
-        or not 0 <= float(average) <= 100
-    ):
-        raise ValueError("average_view_percentage must be between 0 and 100")
-    else:
-        normalized["average_view_percentage"] = float(average)
+    for field in ("average_view_percentage", "completion_rate_percentage"):
+        average = value.get(field)
+        if average in (None, ""):
+            normalized[field] = None
+        elif (
+            isinstance(average, bool)
+            or not isinstance(average, int | float)
+            or not 0 <= float(average) <= 100
+        ):
+            raise ValueError(f"{field} must be between 0 and 100")
+        else:
+            normalized[field] = float(average)
     published_at = value.get("published_at")
     if published_at not in (None, "") and not isinstance(published_at, str):
         raise ValueError("published_at must be text")
     normalized["published_at"] = published_at or None
     if all(
         normalized[field] is None
-        for field in ("views", "likes", "comments", "shares", "average_view_percentage")
+        for field in (
+            "views",
+            "likes",
+            "comments",
+            "shares",
+            "saves",
+            "reach",
+            "follows",
+            "profile_visits",
+            "replays",
+            "average_view_percentage",
+            "completion_rate_percentage",
+        )
     ):
         raise ValueError("Enter at least one performance metric")
     return normalized
@@ -124,6 +148,7 @@ class ProductApplication:
         source: Any,
         source_analytics_filename: str | None = None,
         source_analytics_report: dict[str, Any] | None = None,
+        clip_plan: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Stream an uploaded file to private local storage and queue inference."""
         suffix = Path(original_filename).suffix.lower()
@@ -138,7 +163,7 @@ class ProductApplication:
             raise ValueError("The uploaded video is empty")
         creator_id = creator["creator_id"]
         video = self.store.create_video(
-            creator_id, Path(original_filename).name, upload_path
+            creator_id, Path(original_filename).name, upload_path, clip_plan
         )
         if source_analytics_filename and source_analytics_report:
             self.store.save_analytics_import(
@@ -573,15 +598,23 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
             if analytics_field is not None and analytics_field.filename:
                 analytics_filename = analytics_field.filename
                 payload = analytics_field.file.read(MAXIMUM_ANALYTICS_BYTES + 1)
-                analytics_report = parse_youtube_analytics_export(
-                    analytics_filename, payload
+                analytics_report = parse_analytics_export(
+                    "youtube", analytics_filename, payload
                 )
+            requested_platforms = {}
+            for platform in SUPPORTED_PLATFORMS:
+                if form.getfirst(f"platform_{platform}"):
+                    requested_platforms[platform] = form.getfirst(
+                        f"count_{platform}", ""
+                    )
+            clip_plan = validate_clip_plan(requested_platforms)
             result = application.accept_upload(
                 account,
                 video_field.filename,
                 video_field.file,
                 analytics_filename,
                 analytics_report,
+                clip_plan,
             )
             self._send_json(result, HTTPStatus.ACCEPTED)
 
@@ -690,6 +723,7 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                 video_id,
                 value.get("start_seconds"),
                 value.get("end_seconds"),
+                value.get("platform", "youtube"),
             )
             video = application.store.get_video(video_id)
             video["creator_summary"] = application.store.creator_summary(
@@ -738,9 +772,16 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
             )
             analytics_field = form["analytics"] if "analytics" in form else None
             if analytics_field is None or not analytics_field.filename:
-                raise ValueError("Choose a YouTube Studio ZIP or CSV export")
+                raise ValueError("Choose a CSV, TSV, XLSX, or ZIP analytics export")
+            platform = (
+                "youtube"
+                if report_role == "source_video"
+                else str(form.getfirst("platform", "youtube")).casefold()
+            )
+            if platform not in SUPPORTED_PLATFORMS:
+                raise ValueError("Choose YouTube, Instagram Reels, or TikTok analytics")
             payload = analytics_field.file.read(MAXIMUM_ANALYTICS_BYTES + 1)
-            report = parse_youtube_analytics_export(analytics_field.filename, payload)
+            report = parse_analytics_export(platform, analytics_field.filename, payload)
             if report_role == "published_clip":
                 self._require_clip_owner(target_id, account)
                 application.processor.ensure_clip_semantic_embedding(target_id)
@@ -750,6 +791,7 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                     report_role,
                     report,
                     clip_id=target_id,
+                    platform=platform,
                 )
             else:
                 self._require_video_owner(target_id, account)
@@ -759,6 +801,7 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                     report_role,
                     report,
                     video_id=target_id,
+                    platform=platform,
                 )
             self._send_json({"saved": True, "import": saved}, HTTPStatus.CREATED)
 
