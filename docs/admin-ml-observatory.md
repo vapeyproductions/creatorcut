@@ -37,6 +37,9 @@ The live sections aggregate operational evidence across creator profiles:
 - YouTube, Instagram, and TikTok analytics imports and outcomes by platform, report type,
   recognized rows, retention-point counts, and metric availability;
 - post-copy choices by action and platform;
+- automatic editorial-community contributors, labels, feature weights, and adjustment distributions;
+- opted-in audience-community contributors, audit events, per-platform eligibility, comparable
+  signals, cohort strategy, semantic trends, and applied adjustments;
 - persistent processing-job states and retry counts;
 - a per-account coverage table.
 
@@ -55,3 +58,9 @@ profile names and account emails because the purpose is account-level operations
 unavailable unless the explicit local admin flag is set, and every request requires an
 administrator session. The current credentialed web process refuses non-loopback binding; a public
 deployment must replace this local boundary with managed HTTPS and production identity controls.
+
+Regular creator accounts cannot request either the cross-account observatory or the detailed
+per-account model report. Model-flow controls, cohort identifiers, weights, activation thresholds,
+and adjustment lineage stay inside the administrator boundary. See
+[community-learning-governance.md](community-learning-governance.md) for the exact four-flow
+contract.

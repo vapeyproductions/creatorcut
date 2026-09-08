@@ -34,6 +34,8 @@ const elements = {
   uploadForm: document.querySelector("#upload-form"),
   uploadButton: document.querySelector("#upload-button"),
   uploadError: document.querySelector("#upload-error"),
+  contributionForm: document.querySelector("#contribution-form"),
+  contributionStatus: document.querySelector("#contribution-status"),
   processingSection: document.querySelector("#processing-section"),
   processingFile: document.querySelector("#processing-file"),
   processingMessage: document.querySelector("#processing-message"),
@@ -122,8 +124,27 @@ async function loadConfiguration() {
   try {
     const configuration = await request("/api/config");
     elements.adminLink.hidden = !configuration.admin_dashboard_enabled;
+    elements.modelReportButton.hidden = !configuration.admin_dashboard_enabled;
+    elements.modelReportButton.disabled = !configuration.admin_dashboard_enabled;
   } catch (_error) {
     elements.adminLink.hidden = true;
+    elements.modelReportButton.hidden = true;
+    elements.modelReportButton.disabled = true;
+  }
+}
+
+async function loadContributionSettings() {
+  if (!state.creatorId) return;
+  try {
+    const settings = await request("/api/account/contribution-settings");
+    elements.contributionForm.elements.performance_enabled.checked =
+      settings.performance_enabled;
+    elements.contributionStatus.textContent = settings.updated_at
+      ? "Saved setting loaded."
+      : "Audience-result sharing is off.";
+  } catch (error) {
+    elements.contributionStatus.textContent =
+      error.message || "Contribution settings could not be loaded.";
   }
 }
 
@@ -145,6 +166,7 @@ function showSignedOut() {
   elements.accountLabel.hidden = true;
   elements.logoutButton.hidden = true;
   elements.adminLink.hidden = true;
+  elements.modelReportButton.hidden = true;
   elements.modelReportButton.disabled = true;
   setView("auth");
 }
@@ -156,9 +178,14 @@ async function activateSession(payload) {
   elements.accountLabel.textContent = payload.account.display_name;
   elements.accountLabel.hidden = false;
   elements.logoutButton.hidden = false;
-  elements.modelReportButton.disabled = false;
+  elements.modelReportButton.hidden = true;
+  elements.modelReportButton.disabled = true;
   setView("upload");
-  await Promise.all([loadConfiguration(), loadRecentVideos()]);
+  await Promise.all([
+    loadConfiguration(),
+    loadRecentVideos(),
+    loadContributionSettings(),
+  ]);
 }
 
 async function submitCredentials(form, endpoint) {
@@ -206,6 +233,31 @@ elements.logoutButton.addEventListener("click", async () => {
   } finally {
     elements.logoutButton.disabled = false;
     showSignedOut();
+  }
+});
+
+elements.contributionForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button[type='submit']");
+  button.disabled = true;
+  elements.contributionStatus.textContent = "Saving permissions…";
+  try {
+    const settings = await request("/api/account/contribution-settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        performance_enabled:
+          event.currentTarget.elements.performance_enabled.checked,
+      }),
+    });
+    elements.contributionStatus.textContent = settings.performance_enabled
+      ? "Audience-result sharing is on."
+      : "Audience-result sharing is off.";
+  } catch (error) {
+    elements.contributionStatus.textContent =
+      error.message || "Contribution settings could not be saved.";
+  } finally {
+    button.disabled = false;
   }
 });
 
@@ -308,17 +360,22 @@ function renderResults(video) {
     customEnd.value = Math.min(30, video.duration_seconds).toFixed(1);
   }
   const summary = video.creator_summary;
-  const editorial = summary.personalization_active
-    ? `Editorial preference: active from ${summary.decision_count} prior clip decisions.`
-    : `Editorial preference: ${summary.decision_count}/${summary.editorial_minimum_decision_count} decisions recorded.`;
-  const platformLearning = Object.entries(summary.platform_performance || {})
-    .map(([platform, performance]) => {
-      const status = performance.active ? "active" : "waiting";
-      return `${PLATFORM_LABELS[platform]} audience model: ${status} ` +
-        `(${performance.eligible_clip_count}/${performance.minimum_clip_count} eligible clips).`;
-    })
-    .join("\n");
-  elements.personalizationStatus.textContent = `${editorial}\n${platformLearning}`;
+  if (state.account?.is_admin) {
+    const editorial = summary.personalization_active
+      ? `Editorial preference: active from ${summary.decision_count} prior clip decisions.`
+      : `Editorial preference: ${summary.decision_count}/${summary.editorial_minimum_decision_count} decisions recorded.`;
+    const platformLearning = Object.entries(summary.platform_performance || {})
+      .map(([platform, performance]) => {
+        const status = performance.active ? "active" : "waiting";
+        return `${PLATFORM_LABELS[platform]} audience model: ${status} ` +
+          `(${performance.eligible_clip_count}/${performance.minimum_clip_count} eligible clips).`;
+      })
+      .join("\n");
+    elements.personalizationStatus.textContent = `${editorial}\n${platformLearning}`;
+  } else {
+    elements.personalizationStatus.textContent =
+      "CreatorCut adapts as you choose clips, adjust boundaries, and add audience results.";
+  }
   renderSemanticTrends(summary);
   renderSourceAnalytics(video.source_analytics);
 
@@ -345,6 +402,7 @@ function renderResults(video) {
   for (const clip of video.clips) {
     const fragment = elements.clipTemplate.content.cloneNode(true);
     const article = fragment.querySelector(".clip-result");
+    article.querySelector(".model-evidence").hidden = !state.account?.is_admin;
     article.dataset.clipId = clip.id;
     const rankLabel = article.querySelector(".clip-rank");
     const rankValue = rankLabel.querySelector("strong");
@@ -361,56 +419,58 @@ function renderResults(video) {
       `${formatTime(clip.start_seconds)} — ${formatTime(clip.end_seconds)} / ${formatTime(clip.duration_seconds)}`;
     article.querySelector(".clip-explanation").textContent = clip.explanation;
     article.querySelector(".clip-transcript").textContent = `“${clip.transcript_text}”`;
-    article.querySelector(".global-score").textContent = Number(clip.global_score).toFixed(3);
-    article.querySelector(".global-rank").textContent =
-      clip.origin === "creator"
-        ? "Creator supplied"
-        : clip.global_rank
-          ? `#${clip.global_rank} of all candidates`
-          : "Not recorded";
-    article.querySelector(".model-version").textContent =
-      clip.ranking_model_version || "Legacy local run";
-    article.querySelector(".editorial-adjustment").textContent = formatAdjustment(
-      clip.editorial_adjustment,
-    );
-    article.querySelector(".performance-adjustment").textContent = formatAdjustment(
-      clip.performance_adjustment,
-    );
-    article.querySelector(".semantic-adjustment").textContent = formatAdjustment(
-      clip.semantic_performance_adjustment,
-    );
-    article.querySelector(".retention-adjustment").textContent = formatAdjustment(
-      clip.source_retention_adjustment,
-    );
-    article.querySelector(".platform-adjustment").textContent = formatAdjustment(
-      clip.platform_adjustment,
-    );
-    article.querySelector(".platform-score").textContent = Number(
-      clip.platform_score ?? clip.personalized_score,
-    ).toFixed(3);
-    const delivery = clip.multimodal_features || {};
-    const featureStatus = delivery.status === "unavailable" ? "unavailable" : null;
-    article.querySelector(".audio-urgency").textContent = featureStatus ||
-      `${Math.round(Number(delivery.audio_urgency_score ?? 0.5) * 100)}/100`;
-    article.querySelector(".visual-excitement").textContent = featureStatus ||
-      `${Math.round(Number(delivery.visual_excitement_score ?? 0.5) * 100)}/100`;
-    const publishability = clip.publishability || {};
-    const publishabilityReasons = (publishability.reasons || []).map(
-      (reason) => reason.code.replaceAll("_", " "),
-    );
-    article.querySelector(".publishability-check").textContent = publishability.rule_version
-      ? `${publishability.eligible === false ? "BLOCK" : "PASS"} · ` +
-        `${Math.round(Number(publishability.score) * 100)}/100` +
-        `${publishabilityReasons.length ? ` · ${publishabilityReasons.join(", ")}` : " · no flagged risks"}`
-      : "Not recorded for this legacy recommendation";
-    article.querySelector(".publishability-adjustment").textContent = formatAdjustment(
-      clip.publishability_adjustment,
-    );
-    const targets = article.querySelector(".target-scores");
-    for (const field of ["hook", "completeness", "payoff", "clarity"]) {
-      const item = document.createElement("span");
-      item.textContent = `${field.toUpperCase()} ${Number(clip.predicted_targets[field]).toFixed(2)}`;
-      targets.append(item);
+    if (state.account?.is_admin) {
+      article.querySelector(".global-score").textContent = Number(clip.global_score).toFixed(3);
+      article.querySelector(".global-rank").textContent =
+        clip.origin === "creator"
+          ? "Creator supplied"
+          : clip.global_rank
+            ? `#${clip.global_rank} of all candidates`
+            : "Not recorded";
+      article.querySelector(".model-version").textContent =
+        clip.ranking_model_version || "Legacy local run";
+      article.querySelector(".editorial-adjustment").textContent = formatAdjustment(
+        clip.editorial_adjustment,
+      );
+      article.querySelector(".performance-adjustment").textContent = formatAdjustment(
+        clip.performance_adjustment,
+      );
+      article.querySelector(".semantic-adjustment").textContent = formatAdjustment(
+        clip.semantic_performance_adjustment,
+      );
+      article.querySelector(".retention-adjustment").textContent = formatAdjustment(
+        clip.source_retention_adjustment,
+      );
+      article.querySelector(".platform-adjustment").textContent = formatAdjustment(
+        clip.platform_adjustment,
+      );
+      article.querySelector(".platform-score").textContent = Number(
+        clip.platform_score ?? clip.personalized_score,
+      ).toFixed(3);
+      const delivery = clip.multimodal_features || {};
+      const featureStatus = delivery.status === "unavailable" ? "unavailable" : null;
+      article.querySelector(".audio-urgency").textContent = featureStatus ||
+        `${Math.round(Number(delivery.audio_urgency_score ?? 0.5) * 100)}/100`;
+      article.querySelector(".visual-excitement").textContent = featureStatus ||
+        `${Math.round(Number(delivery.visual_excitement_score ?? 0.5) * 100)}/100`;
+      const publishability = clip.publishability || {};
+      const publishabilityReasons = (publishability.reasons || []).map(
+        (reason) => reason.code.replaceAll("_", " "),
+      );
+      article.querySelector(".publishability-check").textContent = publishability.rule_version
+        ? `${publishability.eligible === false ? "BLOCK" : "PASS"} · ` +
+          `${Math.round(Number(publishability.score) * 100)}/100` +
+          `${publishabilityReasons.length ? ` · ${publishabilityReasons.join(", ")}` : " · no flagged risks"}`
+        : "Not recorded for this legacy recommendation";
+      article.querySelector(".publishability-adjustment").textContent = formatAdjustment(
+        clip.publishability_adjustment,
+      );
+      const targets = article.querySelector(".target-scores");
+      for (const field of ["hook", "completeness", "payoff", "clarity"]) {
+        const item = document.createElement("span");
+        item.textContent = `${field.toUpperCase()} ${Number(clip.predicted_targets[field]).toFixed(2)}`;
+        targets.append(item);
+      }
     }
 
     const videoElement = article.querySelector(".clip-video");
@@ -706,8 +766,9 @@ function renderSemanticTrends(summary) {
     elements.semanticTrends.append(subheading);
     if (!performance.semantic_active) {
       const copy = document.createElement("p");
-      copy.textContent =
-        `Waiting for ${performance.minimum_clip_count} sufficiently viewed clips with outcomes and transcript embeddings.`;
+      copy.textContent = state.account?.is_admin
+        ? `Waiting for ${performance.minimum_clip_count} sufficiently viewed clips with outcomes and transcript embeddings.`
+        : "Insights will appear after enough published clips have audience results.";
       elements.semanticTrends.append(copy);
       continue;
     }
@@ -726,7 +787,9 @@ function renderSemanticTrends(summary) {
       const list = document.createElement("ul");
       for (const trend of trends) {
         const item = document.createElement("li");
-        item.textContent = `${trend.term} (${trend.support} clips)`;
+        item.textContent = state.account?.is_admin
+          ? `${trend.term} (${trend.support} clips)`
+          : trend.term;
         list.append(item);
       }
       elements.semanticTrends.append(termHeading, list);

@@ -2,7 +2,7 @@
 
 CreatorCut is a multimodal ML system that turns long-form creator videos into ranked short clips, thumbnail candidates, captions, and platform-specific posts.
 
-Rather than treating clip selection as an opaque generative-AI task, CreatorCut frames it as an explainable multimodal learning-to-rank problem. Candidate clips are evaluated using transcript, audio, visual, and structural signals, and the interface shows why each recommendation was made.
+Rather than treating clip selection as an opaque generative-AI task, CreatorCut frames it as an explainable multimodal learning-to-rank problem. Candidate clips are evaluated using transcript, audio, visual, and structural signals. Detailed lineage and model diagnostics are reserved for the administrator ML observatory so the creator workflow remains focused.
 
 ## Current product workflow
 
@@ -17,7 +17,7 @@ Rather than treating clip selection as an opaque generative-AI task, CreatorCut 
 7. Export the source aspect ratio, a subject-aware vertical 9:16 crop, or a vertical clip with
    burned captions.
 8. Generate editable, transcript-grounded posts for four platforms.
-9. Capture editorial decisions, post-copy edits, and optional YouTube, Instagram, or TikTok
+9. Capture editorial decisions automatically and use optional YouTube, Instagram, or TikTok
    analytics for bounded feature and semantic personalization.
 
 ## ML system
@@ -77,8 +77,9 @@ creatorcut-account promote-admin --email creator@example.com
 ```
 
 The product then links to `/admin`, where offline holdout evidence is shown separately from live
-selection, rank, clip-length, boundary-edit, input-format, per-platform analytics coverage, account, and
-job-state signals. Both the page and its data endpoint require an authenticated administrator.
+selection, rank, clip-length, boundary-edit, input-format, per-platform analytics coverage,
+cross-creator learning, consent history, applied adjustments, account, and job-state signals. Both
+the page and its data endpoint require an authenticated administrator.
 See [docs/admin-ml-observatory.md](docs/admin-ml-observatory.md).
 
 That command starts the web process plus a durable embedded worker for convenient local use. The
@@ -115,8 +116,8 @@ does not match the artifact and runtime.
 
 The product surface accepts an uploaded video, runs durable local transcription and frozen-model ranking,
 removes high-confidence ads/music-only intervals through a versioned publishability gate, returns
-platform-specific non-duplicative recommendations, exposes global and adaptive score evidence, and
-creates frame-accurate MP4 downloads. A creator may adjust either boundary by up to 15 seconds,
+platform-specific non-duplicative recommendations, and creates frame-accurate MP4 downloads.
+Operational score evidence remains available to administrators. A creator may adjust either boundary by up to 15 seconds,
 choose source-ratio or face-tracked 9:16 captioned export, reject a recommendation, or define a custom
 interval. Finishing a review explicitly records untouched model options as weak unselected evidence;
 ordinary missing clicks stay unlabeled. The SQLite store keeps presentations, choices, exact edits,
@@ -127,7 +128,10 @@ are saved without influencing ranking. After enough comparable clips on one plat
 interpretable quality preferences and similarity to semantically related high-performing clips,
 then displays an evidence-derived summary and recurring stronger/weaker terms. See
 [docs/personalization-and-feedback.md](docs/personalization-and-feedback.md) and
-[docs/platform-aware-ranking.md](docs/platform-aware-ranking.md). The safety/quality split and
+[docs/platform-aware-ranking.md](docs/platform-aware-ranking.md). Cross-creator editorial learning
+is automatic and creator-balanced; shared use of uploaded audience analytics requires explicit
+opt-in and is fully audited. See
+[docs/community-learning-governance.md](docs/community-learning-governance.md). The safety/quality split and
 its current evidence limits are documented in
 [docs/publishability-gate.md](docs/publishability-gate.md). Runtime data contracts,
 event semantics, model lineage, and the local-to-hosted boundary are documented in
@@ -152,11 +156,10 @@ The ignored JSONL snapshot includes impressions, explicit choices, custom clips,
 model lineage, semantic representations, repurposing edits/rejections, and the latest audience
 outcome without exposing media paths.
 
-The in-app **Model report** makes the same system visible without opening the database. It reports
-per-creator serving/job states, model versions, presentation and choice counts, selection rate,
-timestamp-correction magnitude, audience-data coverage, adaptive-layer gates, score-adjustment
-magnitudes, the verified serving release, and a recent event audit trail. Its download action
-exports the creator's versioned, integrity-hashed ML snapshot without media paths. Empty or
+The administrator-only **ML observatory** makes the system visible without opening the database. It
+reports serving/job states, model versions, presentation and choice counts, selection rate,
+timestamp-correction magnitude, audience-data coverage, adaptive and community gates,
+score-adjustment distributions, the verified serving release, and consent audit counts. Empty or
 insufficient evidence is shown as such rather than converted into a success metric.
 
 Validate the source manifest and annotations:

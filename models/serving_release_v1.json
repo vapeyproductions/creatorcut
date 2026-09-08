@@ -12,6 +12,7 @@
   },
   "components": {
     "analytics": "creatorcut_cross_platform_analytics_v2",
+    "community_learning": "creatorcut_community_contribution_v1",
     "delivery_features": "creatorcut_delivery_features_v1",
     "platform_profiles": "creatorcut_platform_profiles_v1",
     "publishability": "creatorcut_publishability_rules_v1",
@@ -41,7 +42,14 @@
     "minimum_source_retention_views": 100,
     "minimum_source_retention_points": 10,
     "maximum_source_retention_adjustment": 0.2,
-    "maximum_publishability_adjustment": 0.35
+    "maximum_publishability_adjustment": 0.35,
+    "minimum_community_editorial_creators": 3,
+    "minimum_community_editorial_decisions": 15,
+    "maximum_community_editorial_adjustment": 0.1,
+    "minimum_community_performance_creators": 3,
+    "minimum_community_performance_clips": 12,
+    "minimum_community_clips_per_creator": 3,
+    "maximum_community_performance_adjustment": 0.12
   },
   "promotion_policy": {
     "production_feedback_auto_trains_global_model": false,

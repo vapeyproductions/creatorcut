@@ -37,6 +37,18 @@ const elements = {
   performanceMetrics: document.querySelector("#performance-metrics"),
   retentionPoints: document.querySelector("#retention-points"),
   outcomeDistributions: document.querySelector("#outcome-distributions"),
+  communityEditorialCreators: document.querySelector("#community-editorial-creators"),
+  communityEditorialDecisions: document.querySelector("#community-editorial-decisions"),
+  communityPerformanceOptIns: document.querySelector("#community-performance-opt-ins"),
+  communityConsentEvents: document.querySelector("#community-consent-events"),
+  communityFlowBody: document.querySelector("#community-flow-body"),
+  communityPlatformBody: document.querySelector("#community-platform-body"),
+  communityPolicy: document.querySelector("#community-policy"),
+  communityEditorialPolicy: document.querySelector("#community-editorial-policy"),
+  communityPerformancePolicy: document.querySelector("#community-performance-policy"),
+  communityEditorialAdjustments: document.querySelector("#community-editorial-adjustments"),
+  communityPerformanceAdjustments: document.querySelector("#community-performance-adjustments"),
+  communitySemanticAdjustments: document.querySelector("#community-semantic-adjustments"),
   accountBody: document.querySelector("#account-body"),
   jobStatuses: document.querySelector("#job-statuses"),
   jobAttempts: document.querySelector("#job-attempts"),
@@ -186,11 +198,108 @@ function renderReport(report) {
   renderCounts(elements.postActions, report.repurposing.action_counts);
   renderCounts(elements.postPlatforms, report.repurposing.platform_counts);
 
+  const community = report.community_learning;
+  elements.communityEditorialCreators.textContent = community.editorial.contributor_count;
+  elements.communityEditorialDecisions.textContent = community.editorial.decision_count;
+  elements.communityPerformanceOptIns.textContent =
+    community.performance.opted_in_account_count;
+  elements.communityConsentEvents.textContent = community.performance.audit_event_count;
+  elements.communityFlowBody.replaceChildren();
+  for (const flow of community.flows) {
+    const row = document.createElement("tr");
+    for (const value of [flow.source, flow.destination, flow.permission]) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    }
+    elements.communityFlowBody.append(row);
+  }
+  elements.communityPlatformBody.replaceChildren();
+  for (const [platform, model] of Object.entries(
+    community.performance.platform_models,
+  )) {
+    const row = document.createElement("tr");
+    for (const value of [
+      platform,
+      model.active ? "active" : "waiting for evidence",
+      model.contributor_count,
+      model.eligible_clip_count,
+      model.strategy.replaceAll("_", " "),
+      (model.comparable_signals || []).join(", ") || "global pool",
+    ]) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    }
+    elements.communityPlatformBody.append(row);
+  }
+  elements.communityPolicy.textContent =
+    `${community.policy_version} · editorial collection automatic · audience analytics explicit opt-in · ` +
+    `global model auto-training ${community.global_promotion.automatic_retraining ? "enabled" : "disabled"}.`;
+  elements.communityEditorialPolicy.replaceChildren();
+  addDefinition(
+    elements.communityEditorialPolicy,
+    "Status",
+    community.editorial.active ? "active" : "waiting for evidence",
+  );
+  addDefinition(
+    elements.communityEditorialPolicy,
+    "Activation gate",
+    `${community.editorial.minimum_contributor_count} creators / ${community.editorial.minimum_decision_count} decisions`,
+  );
+  addDefinition(
+    elements.communityEditorialPolicy,
+    "Maximum adjustment",
+    `±${community.editorial.maximum_adjustment}`,
+  );
+  addDefinition(
+    elements.communityEditorialPolicy,
+    "Feature weights",
+    Object.entries(community.editorial.feature_weights)
+      .map(([name, value]) => `${name.replaceAll("_", " ")} ${Number(value).toFixed(3)}`)
+      .join(", "),
+  );
+  elements.communityPerformancePolicy.replaceChildren();
+  const firstPlatformModel = Object.values(community.performance.platform_models)[0];
+  addDefinition(
+    elements.communityPerformancePolicy,
+    "Activation gate",
+    `${firstPlatformModel.minimum_contributor_count} creators / ${firstPlatformModel.minimum_clip_count} clips / ${firstPlatformModel.minimum_clips_per_contributor} per creator`,
+  );
+  addDefinition(
+    elements.communityPerformancePolicy,
+    "Maximum adjustment",
+    `±${firstPlatformModel.maximum_adjustment}`,
+  );
+  for (const [platform, model] of Object.entries(
+    community.performance.platform_models,
+  )) {
+    addDefinition(
+      elements.communityPerformancePolicy,
+      `${platform} weights`,
+      Object.entries(model.feature_weights)
+        .map(([name, value]) => `${name.replaceAll("_", " ")} ${Number(value).toFixed(3)}`)
+        .join(", "),
+    );
+  }
+  renderDistribution(
+    elements.communityEditorialAdjustments,
+    community.applied_adjustments.editorial,
+  );
+  renderDistribution(
+    elements.communityPerformanceAdjustments,
+    community.applied_adjustments.performance,
+  );
+  renderDistribution(
+    elements.communitySemanticAdjustments,
+    community.applied_adjustments.semantic,
+  );
+
   elements.accountBody.replaceChildren();
   if (!report.accounts.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
-    cell.colSpan = 11;
+    cell.colSpan = 12;
     cell.textContent = "No creator accounts have been created yet.";
     row.append(cell);
     elements.accountBody.append(row);
@@ -215,6 +324,7 @@ function renderReport(report) {
           : `${number(account.median_total_boundary_change_seconds)}s`,
         `${account.analytics_import_count}\n${formatCounts(account.analytics_platform_counts)}`,
         `${account.performance_report_count}\n${formatCounts(account.performance_platform_counts)}`,
+        account.performance_contribution_enabled ? "OPTED IN" : "PRIVATE ONLY",
       ]) {
         const cell = document.createElement("td");
         cell.textContent = value;

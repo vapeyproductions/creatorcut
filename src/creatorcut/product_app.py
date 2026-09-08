@@ -263,6 +263,47 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                 for key in ("creator_id", "display_name", "email", "is_admin")
             }
 
+        def _creator_summary(
+            self, creator_id: str, account: dict[str, Any]
+        ) -> dict[str, Any]:
+            if application.admin_dashboard_enabled and account["is_admin"]:
+                return application.store.creator_summary(creator_id)
+            return application.store.creator_product_summary(creator_id)
+
+        def _video_response(
+            self, video: dict[str, Any], account: dict[str, Any]
+        ) -> dict[str, Any]:
+            """Keep operational ranking evidence inside the administrator boundary."""
+            video["creator_summary"] = self._creator_summary(
+                video["creator_id"], account
+            )
+            if application.admin_dashboard_enabled and account["is_admin"]:
+                return video
+            diagnostic_fields = {
+                "global_score",
+                "personalized_score",
+                "predicted_targets",
+                "global_rank",
+                "ranking_model_version",
+                "editorial_adjustment",
+                "performance_adjustment",
+                "semantic_performance_adjustment",
+                "source_retention_adjustment",
+                "publishability",
+                "publishability_adjustment",
+                "platform_score",
+                "platform_adjustment",
+                "multimodal_features",
+                "community_editorial_adjustment",
+                "community_performance_adjustment",
+                "community_semantic_adjustment",
+                "community_lineage",
+            }
+            for clip in video.get("clips", []):
+                for field in diagnostic_fields:
+                    clip.pop(field, None)
+            return video
+
         def _require_video_owner(
             self, video_id: str, account: dict[str, Any]
         ) -> dict[str, Any]:
@@ -379,10 +420,7 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                 video_id = unquote(path[len("/api/videos/") :]).strip("/")
                 try:
                     video = self._require_video_owner(video_id, account)
-                    video["creator_summary"] = application.store.creator_summary(
-                        video["creator_id"]
-                    )
-                    self._send_json(video)
+                    self._send_json(self._video_response(video, account))
                 except KeyError:
                     self._send_json({"error": "Video not found"}, HTTPStatus.NOT_FOUND)
                 return
@@ -391,7 +429,14 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                     {"videos": application.store.list_videos(account["creator_id"])}
                 )
                 return
+            if path == "/api/account/contribution-settings":
+                self._send_json(
+                    application.store.contribution_settings(account["creator_id"])
+                )
+                return
             if path == "/api/account/model-report":
+                if self._require_admin() is None:
+                    return
                 try:
                     report = application.store.creator_ml_report(account["creator_id"])
                     report["serving_release"] = application.health()["serving_release"]
@@ -447,6 +492,9 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                     return
                 if path == "/api/uploads":
                     self._handle_upload(account)
+                    return
+                if path == "/api/account/contribution-settings":
+                    self._handle_contribution_settings(account)
                     return
                 if path.startswith("/api/clips/") and path.endswith("/decision"):
                     clip_id = unquote(path[len("/api/clips/") : -len("/decision")]).strip("/")
@@ -571,6 +619,14 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                 {"authenticated": False},
                 headers={"Set-Cookie": self._session_cookie("", clear=True)},
             )
+
+        def _handle_contribution_settings(self, account: dict[str, Any]) -> None:
+            value = self._read_json()
+            settings = application.store.save_contribution_settings(
+                account["creator_id"],
+                value.get("performance_enabled"),
+            )
+            self._send_json(settings)
 
         def _handle_upload(self, account: dict[str, Any]) -> None:
             content_length = int(self.headers.get("Content-Length", "0"))
@@ -726,9 +782,7 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                 value.get("platform", "youtube"),
             )
             video = application.store.get_video(video_id)
-            video["creator_summary"] = application.store.creator_summary(
-                video["creator_id"]
-            )
+            video = self._video_response(video, account)
             self._send_json(
                 {"saved": True, "clip_id": clip_id, "video": video},
                 HTTPStatus.CREATED,
@@ -743,9 +797,7 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                 video_id
             )
             video = application.store.get_video(video_id)
-            video["creator_summary"] = application.store.creator_summary(
-                video["creator_id"]
-            )
+            video = self._video_response(video, account)
             self._send_json(
                 {"saved": True, "unselected_count": unselected_count, "video": video},
                 HTTPStatus.CREATED,

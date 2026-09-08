@@ -243,6 +243,57 @@ button:disabled {
   width: 90px;
 }
 
+.contribution-panel {
+  max-width: 760px;
+  margin: 28px 0;
+  padding: 20px;
+  border: 2px solid #111;
+  background: #f4f2ea;
+}
+
+.contribution-panel h2 {
+  margin-bottom: 12px;
+  font-size: clamp(25px, 4vw, 36px);
+}
+
+.contribution-panel > p:not(.section-number, .small-print) {
+  max-width: 670px;
+  line-height: 1.45;
+}
+
+#contribution-form {
+  display: grid;
+  gap: 12px;
+  margin: 18px 0;
+}
+
+#contribution-form label {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+#contribution-form input[type="checkbox"] {
+  width: 18px;
+  min-height: 18px;
+  margin-top: 2px;
+}
+
+#contribution-form span,
+#contribution-form small {
+  display: block;
+}
+
+#contribution-form small {
+  margin-top: 3px;
+  font: 11px/1.45 "Courier New", monospace;
+}
+
+#contribution-form button {
+  justify-self: start;
+}
+
 .plain-button,
 .plain-link {
   min-height: auto;

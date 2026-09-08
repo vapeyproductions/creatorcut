@@ -14,12 +14,12 @@
     <header class="masthead">
       <div>
         <strong>CREATORCUT</strong>
-        <span>FROZEN RELEASE V1</span>
+        <span>VIDEO REPURPOSING</span>
       </div>
       <div class="masthead-actions">
         <p>One long video in. Platform-ranked clips out.</p>
         <a id="admin-link" class="plain-link" href="/admin" hidden>ML OBSERVATORY</a>
-        <button id="model-report-button" class="plain-button" type="button" disabled>MODEL REPORT</button>
+        <button id="model-report-button" class="plain-button" type="button" hidden disabled>MODEL REPORT</button>
         <span id="account-label" class="account-label" hidden></span>
         <button id="logout-button" class="plain-button" type="button" hidden>LOG OUT</button>
       </div>
@@ -107,15 +107,29 @@
           already been published on YouTube, its retention export can inform the ranking when the
           report has enough traffic.
         </p>
-        <details class="system-details">
-          <summary>How the ML system is controlled</summary>
-          <dl>
-            <div><dt>Global ranker</dt><dd>Frozen and integrity-checked before inference.</dd></div>
-            <div><dt>Creator learning</dt><dd>Starts only after explicit clip decisions.</dd></div>
-            <div><dt>Audience learning</dt><dd>Starts only after enough comparable, sufficiently viewed Shorts.</dd></div>
-            <div><dt>Promotion</dt><dd>A new global model requires evaluation on untouched videos.</dd></div>
-          </dl>
-        </details>
+        <section class="contribution-panel" aria-labelledby="contribution-title">
+          <p class="section-number">OPTIONAL</p>
+          <h2 id="contribution-title">Help improve future recommendations</h2>
+          <p>
+            Allow de-identified performance analytics you upload to improve recommendations for
+            creators with similar content. You can change this setting later.
+          </p>
+          <form id="contribution-form">
+            <label>
+              <input name="performance_enabled" type="checkbox" />
+              <span>
+                <strong>Share de-identified audience results</strong>
+                <small>Applies to uploaded YouTube, Instagram, and TikTok performance reports.</small>
+              </span>
+            </label>
+            <button type="submit">SAVE SETTING</button>
+            <p id="contribution-status" class="clip-message" role="status"></p>
+          </form>
+          <p class="small-print">
+            Account names, email addresses, source-video files, and raw transcripts are not
+            included in shared audience data.
+          </p>
+        </section>
         <section id="recent-section" class="recent-section" hidden>
           <h2>Recent runs</h2>
           <ul id="recent-videos"></ul>
@@ -282,7 +296,7 @@
           </div>
           <div class="clip-information">
             <p class="clip-explanation"></p>
-            <details class="model-evidence">
+            <details class="model-evidence" hidden>
               <summary>Why this ranking changed</summary>
               <dl>
                 <div><dt>Global model score</dt><dd class="global-score"></dd></div>

@@ -97,6 +97,31 @@ def test_http_sessions_enforce_creator_ownership_csrf_and_admin_role(tmp_path):
     source = tmp_path / "source.mp4"
     source.touch()
     admin_video = store.create_video(admin["creator_id"], source.name, source)
+    creator_video = store.create_video(creator["creator_id"], "creator.mp4", source)
+    store.save_ranked_clips(
+        creator_video["id"],
+        [
+            {
+                "id": f"{creator_video['id']}_clip_1",
+                "rank": 1,
+                "start_seconds": 5.0,
+                "end_seconds": 35.0,
+                "duration_seconds": 30.0,
+                "transcript_text": "A useful complete example.",
+                "semantic_embedding": [0.0, 1.0],
+                "global_score": 4.0,
+                "personalized_score": 4.0,
+                "predicted_targets": {
+                    "hook": 4.0,
+                    "completeness": 4.0,
+                    "payoff": 4.0,
+                    "clarity": 4.0,
+                },
+                "explanation": "A concise complete moment.",
+                "community_lineage": {"editorial": {"active": False}},
+            }
+        ],
+    )
 
     class ProcessorStub:
         work_dir = tmp_path / "work"
@@ -165,7 +190,43 @@ def test_http_sessions_enforce_creator_ownership_csrf_and_admin_role(tmp_path):
         "GET", f"/api/videos/{admin_video['id']}", headers=creator_headers
     )
     assert status == 404
+    status, own_video, _ = request(
+        "GET", f"/api/videos/{creator_video['id']}", headers=creator_headers
+    )
+    assert status == 200
+    assert own_video["creator_summary"] == {
+        "personalization_active": False,
+        "platform_performance": {
+            platform: {
+                "semantic_active": False,
+                "insight_summary": None,
+                "positive_semantic_trends": [],
+                "negative_semantic_trends": [],
+            }
+            for platform in ("youtube", "instagram", "tiktok")
+        },
+    }
+    assert "global_score" not in own_video["clips"][0]
+    assert "community_lineage" not in own_video["clips"][0]
     status, _, _ = request("GET", "/admin", headers=creator_headers)
+    assert status == 403
+    status, settings, _ = request(
+        "GET", "/api/account/contribution-settings", headers=creator_headers
+    )
+    assert status == 200
+    assert settings["performance_enabled"] is False
+    assert "editorial_enabled" not in settings
+    status, settings, _ = request(
+        "POST",
+        "/api/account/contribution-settings",
+        {"editorial_enabled": False, "performance_enabled": True},
+        {**creator_headers, "X-CSRF-Token": login["csrf_token"]},
+    )
+    assert status == 200
+    assert settings["performance_enabled"] is True
+    status, _, _ = request(
+        "GET", "/api/account/model-report", headers=creator_headers
+    )
     assert status == 403
     status, _, _ = request(
         "POST", "/api/auth/logout", {"logout": True}, creator_headers

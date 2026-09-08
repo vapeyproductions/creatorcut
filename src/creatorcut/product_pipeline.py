@@ -734,6 +734,7 @@ class ProductProcessor:
                 personalized, _ = self.store.personalize_candidates(
                     video["creator_id"], scored, platform
                 )
+                personalized, _ = self.store.apply_community_editorial(personalized)
                 personalized, _ = self.store.apply_source_retention_signal(
                     video_id, personalized
                 )
@@ -745,6 +746,9 @@ class ProductProcessor:
                     }
                     for candidate in personalized
                 ]
+                personalized, _ = self.store.apply_community_performance(
+                    video["creator_id"], personalized, platform
+                )
                 selected, plan = plan_platform_clips(
                     personalized,
                     platform,
@@ -859,12 +863,17 @@ class ProductProcessor:
         personalized, _ = self.store.personalize_candidates(
             video["creator_id"], [candidate], platform
         )
+        personalized, _ = self.store.apply_community_editorial(personalized)
         adjusted, _ = self.store.apply_source_retention_signal(video_id, personalized)
         prepared = {
             **adjusted[0],
             "personalized_score": float(adjusted[0]["personalized_score"])
             + float(adjusted[0]["publishability_adjustment"]),
         }
+        community_adjusted, _ = self.store.apply_community_performance(
+            video["creator_id"], [prepared], platform
+        )
+        prepared = community_adjusted[0]
         clip = {
             **attach_platform_scores([prepared], platform)[0],
             "platform": platform,

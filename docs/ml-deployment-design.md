@@ -15,7 +15,9 @@ upload
   -> versioned publishability gate
   -> frozen transcript embedding + production audio/visual delivery descriptors
   -> frozen global quality predictions
-  -> creator editorial + per-platform performance + semantic + source-retention adjustments
+  -> creator editorial + automatic community editorial prior
+  -> private per-platform performance + semantic + source-retention adjustments
+  -> optional comparable-audience/content performance prior
   -> platform prior + diverse requested/automatic clip-count planning
   -> preview / edit / subject-aware export / reject / custom alternative
   -> transcript-grounded platform posts + exact copy feedback
@@ -39,9 +41,9 @@ runtime image, liveness and readiness endpoints, structured JSON logs, and CI ch
 and container construction. Readiness verifies the serving database and frozen model artifact;
 queue counters expose queued, running, succeeded, and failed work without revealing creator data.
 
-## In-product ML operations report
+## Administrator ML operations report
 
-The website exposes a per-creator report backed by live operational records rather than demo
+The administrator observatory exposes reports backed by live operational records rather than demo
 numbers. It combines video and persistent-job states, model-version lineage, presented and selected
 clip counts, custom alternatives, explicit rejects, edited-boundary magnitude, analytics coverage,
 adaptive-layer gates, observed adjustment magnitudes, and the latest feedback events. This gives a
@@ -50,13 +52,13 @@ paths and transcript embeddings private.
 
 The report deliberately labels the global ranker as frozen and shows inactive adaptation layers as
 waiting for evidence. A missing denominator stays unavailable; it is not rendered as zero success.
-It also exposes the verified serving-release ID, component versions, and model-artifact digest. A
-creator can download the same integrity-hashed feedback snapshot used at the offline-training
-boundary directly from the report.
+It also exposes the verified serving-release ID, component versions, and model-artifact digest.
+Regular creator accounts cannot access these operational routes or per-clip model-evidence panels.
 
-An opt-in local administrator observatory aggregates model impressions, choices by displayed rank,
+The local administrator observatory aggregates model impressions, choices by displayed rank,
 clip/source duration distributions, boundary corrections, file and export formats, per-platform analytics-field
-coverage, processing jobs, and per-account denominators. It keeps frozen offline evaluation
+coverage, community-learning gates, consent audit counts, applied adjustments, processing jobs,
+and per-account denominators. It keeps frozen offline evaluation
 separate from live behavioral signals and omits transcripts, media paths, and raw analytics rows.
 The route is disabled by default because a public version requires administrator authentication.
 
@@ -99,7 +101,8 @@ Each persisted clip records:
 - predicted hook, completeness, payoff, and clarity;
 - global candidate rank and global score;
 - platform, platform rank, platform prior, and compact audio/visual delivery descriptors;
-- publishability, editorial, structured-performance, semantic-performance, and source-retention adjustments;
+- publishability, creator editorial, community editorial, private structured/semantic performance,
+  community structured/semantic performance, and source-retention adjustments;
 - final personalized score and explanation.
 
 The schema uses additive migrations so a local database from an earlier build gains new lineage
@@ -131,7 +134,7 @@ This creates an inspectable boundary between the serving database and future off
 
 ## Online adaptation
 
-The global model remains frozen. Product feedback affects only bounded creator-and-platform-specific layers:
+The global model remains frozen. Product feedback affects only bounded adaptive layers:
 
 - editorial preference: activates after three explicit clip decisions; cap ±0.35;
 - structured audience preference: at least five sufficiently viewed clips for that platform; component cap ±0.15;
@@ -143,15 +146,27 @@ All audience targets are within-creator, within-platform percentiles. Raw views 
 label. The semantic layer uses similarity-weighted outcomes from frozen transcript embeddings; the
 visible recurring terms explain the history but do not define semantic similarity.
 
+Automatic community editorial learning requires at least three contributing creators and fifteen
+explicit decisions. Each creator is fit separately before aggregation so activity volume does not
+determine influence. Its score change is capped at ±0.10.
+
+Community audience learning uses only accounts that explicitly enabled shared analytics. It needs
+at least three other creators, twelve eligible clips in total, and three eligible clips from each
+contributor. A soft audience/content neighborhood compares available outcome aggregates, clip
+lengths, source-retention summaries, and transcript-embedding centroids. Its structured and
+semantic components are jointly capped at ±0.12 and isolated by platform.
+
 ## Transparent audience insights
 
-Once audience adaptation is eligible, CreatorCut shows:
+Once audience adaptation is eligible, CreatorCut can show creators concise content insights such
+as recurring stronger and weaker themes. The administrator can additionally inspect:
 
 - a plain-language summary of the strongest hook/completeness/payoff/clarity/duration directions;
 - recurring words and two-word phrases associated with stronger clips;
 - recurring terms associated with weaker clips;
-- the number of eligible published Shorts;
-- every adjustment applied to each new recommendation.
+- eligible evidence counts, feature weights, and shrinkage;
+- cohort strategy and comparable signals;
+- every adjustment distribution applied to new recommendations.
 
 The summary is deterministic and evidence-derived. It explicitly describes association rather than
 causation, because topic, publication time, distribution, audience mix, and packaging can all

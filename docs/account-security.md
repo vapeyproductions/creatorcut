@@ -34,6 +34,21 @@ local database receives that role only when the local administrator mode was del
 Additional administrators are provisioned through `creatorcut-account`; passwords are prompted
 interactively rather than accepted as command arguments.
 
+Detailed model reports, cross-creator learning status, data-flow lineage, cohort diagnostics, and
+adjustment distributions use the same administrator boundary. Hiding controls in the browser is
+not treated as authorization; the backing endpoints independently verify the administrator role.
+
+## Product telemetry and audience analytics
+
+Explicit clip selections, rejections, custom intervals, and timestamp corrections are core
+editorial telemetry and automatically inform creator-specific and creator-balanced community
+editing models. There is no editorial-contribution toggle.
+
+Cross-creator use of uploaded audience analytics is off by default. The creator can enable one
+account-level setting, and every change is recorded in an append-only consent audit table with a
+policy version and timestamp. Disabling it excludes that account from subsequent shared audience
+calculations. Private creator-level analysis of the creator's own uploads remains available.
+
 ## Local-to-public boundary
 
 This implementation is intentionally a loopback-only product server. It demonstrates credential

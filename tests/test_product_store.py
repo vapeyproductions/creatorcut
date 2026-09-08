@@ -53,6 +53,23 @@ def populated_store(tmp_path):
     return store, creator, video, clips
 
 
+def add_creator_examples(store, tmp_path, creator_id, clip_count=5, platform="youtube"):
+    creator = store.ensure_creator(creator_id, creator_id)
+    source = tmp_path / f"{creator_id}.mp4"
+    source.touch()
+    video = store.create_video(creator["id"], source.name, source)
+    store.update_video(video["id"], "ranking_candidates", duration_seconds=240.0)
+    clips = []
+    for index in range(clip_count):
+        clip = ranked_clip(index + 1, float((index % 5) + 1), index * 35.0)
+        clip["id"] = f"{video['id']}_clip_{index + 1}"
+        clip["platform"] = platform
+        clips.append(clip)
+    store.save_ranked_clips(video["id"], clips)
+    store.update_video(video["id"], "ready")
+    return creator, video, clips
+
+
 def test_store_persists_upload_clips_and_presentations(tmp_path):
     store, creator, video, clips = populated_store(tmp_path)
 
@@ -724,6 +741,96 @@ def test_performance_learning_is_isolated_by_platform(tmp_path):
     assert youtube["performance"]["eligible_clip_count"] == 0
     report = store.admin_ml_report()
     assert report["analytics"]["performance_platforms"] == {"instagram": 5}
+
+
+def test_editorial_community_learning_is_automatic_and_creator_balanced(tmp_path):
+    store = ProductStore(tmp_path / "community.sqlite")
+    for creator_index in range(3):
+        creator, _, clips = add_creator_examples(
+            store, tmp_path, f"editor_{creator_index}", clip_count=5
+        )
+        assert store.contribution_settings(f"editor_{creator_index}")[
+            "performance_enabled"
+        ] is False
+        for clip_index, clip in enumerate(clips):
+            event = "download_original" if clip_index >= 2 else "reject"
+            store.record_editorial_event(
+                clip["id"], event, clip["start_seconds"], clip["end_seconds"]
+            )
+
+    report = store.community_ml_report()
+
+    assert report["editorial"]["active"] is True
+    assert report["editorial"]["collection"] == "automatic"
+    assert report["editorial"]["creator_opt_out"] is False
+    assert report["editorial"]["contributor_count"] == 3
+    assert report["editorial"]["decision_count"] == 15
+    assert report["performance"]["opted_in_account_count"] == 0
+
+
+def test_audience_community_learning_requires_audited_opt_in(tmp_path):
+    store = ProductStore(tmp_path / "community.sqlite")
+    for creator_index in range(3):
+        creator_id = f"audience_{creator_index}"
+        creator, _, clips = add_creator_examples(
+            store, tmp_path, creator_id, clip_count=5, platform="tiktok"
+        )
+        for clip_index, clip in enumerate(clips):
+            store.save_performance_report(
+                clip["id"],
+                {
+                    "platform": "tiktok",
+                    "views": 1000 + clip_index * 100,
+                    "average_view_percentage": 45.0 + clip_index * 10.0,
+                    "likes": 25 + clip_index * 10,
+                    "shares": 3 + clip_index,
+                },
+            )
+        saved = store.save_contribution_settings(creator["id"], True)
+        assert saved["performance_enabled"] is True
+        assert saved["audit_event_count"] == 1
+
+    target, _, _ = add_creator_examples(
+        store, tmp_path, "target_creator", clip_count=1, platform="tiktok"
+    )
+    candidate = ranked_clip(100, 5.0, 5.0)
+    candidate["personalized_score"] = 3.5
+    adjusted, metadata = store.apply_community_performance(
+        target["id"], [candidate], "tiktok"
+    )
+
+    assert metadata["active"] is True
+    assert metadata["contributor_count"] == 3
+    assert metadata["eligible_clip_count"] == 15
+    assert abs(
+        adjusted[0]["community_performance_adjustment"]
+        + adjusted[0]["community_semantic_adjustment"]
+    ) <= 0.12
+    assert store.community_ml_report()["performance"]["audit_event_count"] == 3
+
+    store.save_contribution_settings("audience_0", False)
+    _, after_revocation = store.apply_community_performance(
+        target["id"], [candidate], "tiktok"
+    )
+    assert after_revocation["active"] is False
+    assert after_revocation["contributor_count"] == 2
+
+
+def test_admin_report_contains_community_controls_and_persisted_lineage(tmp_path):
+    store, creator, video, _ = populated_store(tmp_path)
+    store.save_contribution_settings(creator["id"], True)
+
+    public_clip = store.get_video(video["id"])["clips"][0]
+    report = store.admin_ml_report()
+
+    assert public_clip["community_lineage"] == {}
+    assert public_clip["community_editorial_adjustment"] == 0
+    assert report["community_learning"]["flows"][1] == {
+        "source": "creator editorial decisions",
+        "destination": "creator-balanced community editorial prior",
+        "permission": "automatic",
+    }
+    assert report["accounts"][0]["performance_contribution_enabled"] is True
 
 
 def test_store_rejects_unknown_editorial_event(tmp_path):

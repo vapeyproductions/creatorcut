@@ -9,10 +9,18 @@ from typing import Any
 
 from creatorcut.holdout import canonical_sha256
 from creatorcut.product_store import (
+    CONTRIBUTION_POLICY_VERSION,
+    MAXIMUM_COMMUNITY_EDITORIAL_ADJUSTMENT,
+    MAXIMUM_COMMUNITY_PERFORMANCE_ADJUSTMENT,
     MAXIMUM_PERSONALIZATION_ADJUSTMENT,
     MAXIMUM_SEMANTIC_PERFORMANCE_ADJUSTMENT,
     MAXIMUM_SOURCE_RETENTION_ADJUSTMENT,
     MAXIMUM_STRUCTURED_PERFORMANCE_ADJUSTMENT,
+    MINIMUM_COMMUNITY_EDITORIAL_CREATORS,
+    MINIMUM_COMMUNITY_EDITORIAL_DECISIONS,
+    MINIMUM_COMMUNITY_PER_CREATOR_CLIPS,
+    MINIMUM_COMMUNITY_PERFORMANCE_CLIPS,
+    MINIMUM_COMMUNITY_PERFORMANCE_CREATORS,
     MINIMUM_EDITORIAL_DECISIONS,
     MINIMUM_PERFORMANCE_EXAMPLES,
     MINIMUM_PERFORMANCE_VIEWS,
@@ -79,6 +87,12 @@ def validate_serving_release(
         REPURPOSING_VERSION,
         components.get("repurposing"),
     )
+    _expect(
+        errors,
+        "community learning version",
+        CONTRIBUTION_POLICY_VERSION,
+        components.get("community_learning"),
+    )
     policy = manifest.get("personalization_policy", {})
     expected_policy = {
         "minimum_editorial_decisions": MINIMUM_EDITORIAL_DECISIONS,
@@ -95,6 +109,19 @@ def validate_serving_release(
         "minimum_source_retention_points": MINIMUM_SOURCE_RETENTION_POINTS,
         "maximum_source_retention_adjustment": MAXIMUM_SOURCE_RETENTION_ADJUSTMENT,
         "maximum_publishability_adjustment": MAXIMUM_PUBLISHABILITY_ADJUSTMENT,
+        "minimum_community_editorial_creators": MINIMUM_COMMUNITY_EDITORIAL_CREATORS,
+        "minimum_community_editorial_decisions": MINIMUM_COMMUNITY_EDITORIAL_DECISIONS,
+        "maximum_community_editorial_adjustment": (
+            MAXIMUM_COMMUNITY_EDITORIAL_ADJUSTMENT
+        ),
+        "minimum_community_performance_creators": (
+            MINIMUM_COMMUNITY_PERFORMANCE_CREATORS
+        ),
+        "minimum_community_performance_clips": MINIMUM_COMMUNITY_PERFORMANCE_CLIPS,
+        "minimum_community_clips_per_creator": MINIMUM_COMMUNITY_PER_CREATOR_CLIPS,
+        "maximum_community_performance_adjustment": (
+            MAXIMUM_COMMUNITY_PERFORMANCE_ADJUSTMENT
+        ),
     }
     for field, expected in expected_policy.items():
         _expect(errors, f"personalization policy {field}", policy.get(field), expected)

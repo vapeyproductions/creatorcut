@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -44,6 +45,16 @@ MINIMUM_PERFORMANCE_VIEWS = 50
 MAXIMUM_SOURCE_RETENTION_ADJUSTMENT = 0.20
 MINIMUM_SOURCE_RETENTION_POINTS = 10
 MINIMUM_SOURCE_RETENTION_VIEWS = 100
+CONTRIBUTION_POLICY_VERSION = "creatorcut_community_contribution_v1"
+MINIMUM_COMMUNITY_EDITORIAL_CREATORS = 3
+MINIMUM_COMMUNITY_EDITORIAL_DECISIONS = 15
+MAXIMUM_COMMUNITY_EDITORIAL_ADJUSTMENT = 0.10
+MINIMUM_COMMUNITY_PERFORMANCE_CREATORS = 3
+MINIMUM_COMMUNITY_PERFORMANCE_CLIPS = 12
+MINIMUM_COMMUNITY_PER_CREATOR_CLIPS = 3
+MAXIMUM_COMMUNITY_STRUCTURED_ADJUSTMENT = 0.08
+MAXIMUM_COMMUNITY_SEMANTIC_ADJUSTMENT = 0.08
+MAXIMUM_COMMUNITY_PERFORMANCE_ADJUSTMENT = 0.12
 
 PREFERENCE_FEATURE_NAMES = (
     "hook",
@@ -199,6 +210,27 @@ class ProductStore:
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS contribution_settings (
+                creator_id TEXT PRIMARY KEY
+                    REFERENCES creator_profiles(id) ON DELETE CASCADE,
+                performance_enabled INTEGER NOT NULL DEFAULT 0
+                    CHECK(performance_enabled IN (0, 1)),
+                policy_version TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS contribution_audit_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                creator_id TEXT NOT NULL
+                    REFERENCES creator_profiles(id) ON DELETE CASCADE,
+                contribution_type TEXT NOT NULL,
+                enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
+                policy_version TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS auth_sessions (
                 token_digest TEXT PRIMARY KEY,
                 creator_id TEXT NOT NULL
@@ -250,6 +282,10 @@ class ProductStore:
                 platform_rank INTEGER,
                 platform_score REAL,
                 platform_adjustment REAL NOT NULL DEFAULT 0,
+                community_editorial_adjustment REAL NOT NULL DEFAULT 0,
+                community_performance_adjustment REAL NOT NULL DEFAULT 0,
+                community_semantic_adjustment REAL NOT NULL DEFAULT 0,
+                community_lineage_json TEXT NOT NULL DEFAULT '{}',
                 multimodal_features_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
                 UNIQUE(video_id, rank)
@@ -348,6 +384,10 @@ class ProductStore:
             "CREATE INDEX IF NOT EXISTS idx_auth_sessions_creator_id ON auth_sessions(creator_id)",
             "CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at)",
             """
+            CREATE INDEX IF NOT EXISTS idx_contribution_performance
+            ON contribution_settings(performance_enabled, creator_id)
+            """,
+            """
             CREATE INDEX IF NOT EXISTS idx_export_downloads_expiry
             ON export_downloads(expires_at)
             """,
@@ -433,6 +473,10 @@ class ProductStore:
                 "platform_rank": "INTEGER",
                 "platform_score": "REAL",
                 "platform_adjustment": "REAL NOT NULL DEFAULT 0",
+                "community_editorial_adjustment": "REAL NOT NULL DEFAULT 0",
+                "community_performance_adjustment": "REAL NOT NULL DEFAULT 0",
+                "community_semantic_adjustment": "REAL NOT NULL DEFAULT 0",
+                "community_lineage_json": "TEXT NOT NULL DEFAULT '{}'",
                 "multimodal_features_json": "TEXT NOT NULL DEFAULT '{}'",
             },
             "performance_reports": {
@@ -479,6 +523,87 @@ class ProductStore:
                 )
                 return {"id": normalized_id, "display_name": normalized_name}
             return {"id": existing["id"], "display_name": existing["display_name"]}
+
+    def contribution_settings(self, creator_id: str) -> dict[str, Any]:
+        """Return the creator's optional audience-analytics contribution setting."""
+        with self._connect() as connection:
+            creator = connection.execute(
+                "SELECT 1 FROM creator_profiles WHERE id = ?", (creator_id,)
+            ).fetchone()
+            if creator is None:
+                raise KeyError(creator_id)
+            row = connection.execute(
+                "SELECT * FROM contribution_settings WHERE creator_id = ?",
+                (creator_id,),
+            ).fetchone()
+            audit_count = connection.execute(
+                "SELECT COUNT(*) FROM contribution_audit_events WHERE creator_id = ?",
+                (creator_id,),
+            ).fetchone()[0]
+        return {
+            "policy_version": CONTRIBUTION_POLICY_VERSION,
+            "performance_enabled": bool(row["performance_enabled"]) if row else False,
+            "updated_at": row["updated_at"] if row else None,
+            "audit_event_count": int(audit_count),
+            "performance_scope": (
+                "De-identified clip features, transcript embeddings, and uploaded audience "
+                "outcomes may inform comparable-audience community models."
+            ),
+            "revocation_effect": (
+                "Turning a permission off excludes this account from future community snapshots "
+                "and model calculations; it cannot undo an already promoted historical release."
+            ),
+        }
+
+    def save_contribution_settings(
+        self,
+        creator_id: str,
+        performance_enabled: bool,
+    ) -> dict[str, Any]:
+        """Persist analytics consent and an append-only permission audit trail."""
+        if type(performance_enabled) is not bool:
+            raise ValueError("Contribution permissions must be true or false")
+        current = self.contribution_settings(creator_id)
+        now = utc_now()
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO contribution_settings(
+                    creator_id, performance_enabled,
+                    policy_version, updated_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(creator_id) DO UPDATE SET
+                    performance_enabled = excluded.performance_enabled,
+                    policy_version = excluded.policy_version,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    creator_id,
+                    int(performance_enabled),
+                    CONTRIBUTION_POLICY_VERSION,
+                    now,
+                ),
+            )
+            changes = (("performance", current["performance_enabled"], performance_enabled),)
+            for contribution_type, previous, enabled in changes:
+                if previous == enabled:
+                    continue
+                connection.execute(
+                    """
+                    INSERT INTO contribution_audit_events(
+                        creator_id, contribution_type, enabled,
+                        policy_version, created_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        creator_id,
+                        contribution_type,
+                        int(enabled),
+                        CONTRIBUTION_POLICY_VERSION,
+                        now,
+                    ),
+                )
+        return self.contribution_settings(creator_id)
 
     @staticmethod
     def _public_account(row: sqlite3.Row) -> dict[str, Any]:
@@ -1105,11 +1230,14 @@ class ProductStore:
                         semantic_performance_adjustment, source_retention_adjustment,
                         publishability_json, publishability_adjustment,
                         semantic_embedding_json, platform, platform_rank,
-                        platform_score, platform_adjustment, multimodal_features_json,
-                        created_at
+                        platform_score, platform_adjustment,
+                        community_editorial_adjustment,
+                        community_performance_adjustment,
+                        community_semantic_adjustment, community_lineage_json,
+                        multimodal_features_json, created_at
                     ) VALUES (
                         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                        ?, ?, ?, ?, ?, ?, ?
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                     )
                     """,
                     (
@@ -1140,6 +1268,10 @@ class ProductStore:
                         clip.get("platform_rank", clip["rank"]),
                         clip.get("platform_score", clip["personalized_score"]),
                         clip.get("platform_adjustment", 0.0),
+                        clip.get("community_editorial_adjustment", 0.0),
+                        clip.get("community_performance_adjustment", 0.0),
+                        clip.get("community_semantic_adjustment", 0.0),
+                        json.dumps(clip.get("community_lineage", {}), sort_keys=True),
                         json.dumps(clip.get("multimodal_features", {}), sort_keys=True),
                         utc_now(),
                     ),
@@ -1190,6 +1322,18 @@ class ProductStore:
                                 "platform_adjustment": clip.get(
                                     "platform_adjustment", 0.0
                                 ),
+                                "community_editorial_adjustment": clip.get(
+                                    "community_editorial_adjustment", 0.0
+                                ),
+                                "community_performance_adjustment": clip.get(
+                                    "community_performance_adjustment", 0.0
+                                ),
+                                "community_semantic_adjustment": clip.get(
+                                    "community_semantic_adjustment", 0.0
+                                ),
+                                "community_lineage": clip.get(
+                                    "community_lineage", {}
+                                ),
                                 "multimodal_features": clip.get(
                                     "multimodal_features", {}
                                 ),
@@ -1220,10 +1364,13 @@ class ProductStore:
                     source_retention_adjustment, publishability_json,
                     publishability_adjustment, semantic_embedding_json, platform,
                     platform_rank, platform_score, platform_adjustment,
+                    community_editorial_adjustment,
+                    community_performance_adjustment,
+                    community_semantic_adjustment, community_lineage_json,
                     multimodal_features_json, created_at
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -1252,6 +1399,10 @@ class ProductStore:
                     clip.get("platform_rank"),
                     clip.get("platform_score", clip["personalized_score"]),
                     clip.get("platform_adjustment", 0.0),
+                    clip.get("community_editorial_adjustment", 0.0),
+                    clip.get("community_performance_adjustment", 0.0),
+                    clip.get("community_semantic_adjustment", 0.0),
+                    json.dumps(clip.get("community_lineage", {}), sort_keys=True),
                     json.dumps(clip.get("multimodal_features", {}), sort_keys=True),
                     utc_now(),
                 ),
@@ -1285,6 +1436,16 @@ class ProductStore:
                             "platform_score": clip.get(
                                 "platform_score", clip["personalized_score"]
                             ),
+                            "community_editorial_adjustment": clip.get(
+                                "community_editorial_adjustment", 0.0
+                            ),
+                            "community_performance_adjustment": clip.get(
+                                "community_performance_adjustment", 0.0
+                            ),
+                            "community_semantic_adjustment": clip.get(
+                                "community_semantic_adjustment", 0.0
+                            ),
+                            "community_lineage": clip.get("community_lineage", {}),
                         },
                         sort_keys=True,
                     ),
@@ -1632,6 +1793,69 @@ class ProductStore:
             },
         }
 
+    def community_ml_report(self) -> dict[str, Any]:
+        """Return administrator-only status for cross-creator learning flows."""
+        _, editorial = self._community_editorial_profile()
+        with self._connect() as connection:
+            opted_in = connection.execute(
+                "SELECT COUNT(*) FROM contribution_settings WHERE performance_enabled = 1"
+            ).fetchone()[0]
+            settings_count = connection.execute(
+                "SELECT COUNT(*) FROM contribution_settings"
+            ).fetchone()[0]
+            audit_count = connection.execute(
+                "SELECT COUNT(*) FROM contribution_audit_events"
+            ).fetchone()[0]
+        platform_models = {}
+        for platform in ("youtube", "instagram", "tiktok"):
+            _, _, metadata = self._community_performance_profile(
+                "__creatorcut_admin_observatory__", platform
+            )
+            platform_models[platform] = metadata
+        return {
+            "policy_version": CONTRIBUTION_POLICY_VERSION,
+            "editorial": {
+                **editorial,
+                "collection": "automatic",
+                "creator_opt_out": False,
+                "balanced_per_creator": True,
+            },
+            "performance": {
+                "collection": "explicit_opt_in",
+                "opted_in_account_count": int(opted_in),
+                "account_setting_count": int(settings_count),
+                "audit_event_count": int(audit_count),
+                "platform_models": platform_models,
+            },
+            "flows": [
+                {
+                    "source": "creator editorial decisions",
+                    "destination": "creator-specific editorial reranker",
+                    "permission": "automatic",
+                },
+                {
+                    "source": "creator editorial decisions",
+                    "destination": "creator-balanced community editorial prior",
+                    "permission": "automatic",
+                },
+                {
+                    "source": "uploaded audience outcomes",
+                    "destination": "creator-specific platform performance model",
+                    "permission": "private processing",
+                },
+                {
+                    "source": "uploaded audience outcomes",
+                    "destination": "comparable-audience community model",
+                    "permission": "explicit opt-in",
+                },
+            ],
+            "global_promotion": {
+                "automatic_retraining": False,
+                "requires_versioned_snapshot": True,
+                "requires_untouched_video_evaluation": True,
+            },
+        }
+
     def admin_ml_report(self) -> dict[str, Any]:
         """Aggregate privacy-conscious serving and feedback signals across creators."""
         with self._connect() as connection:
@@ -1658,7 +1882,10 @@ class ProductStore:
                 SELECT clips.id, videos.creator_id, clips.rank, clips.platform_rank,
                        clips.platform, clips.origin,
                        clips.duration_seconds, clips.global_score,
-                       clips.personalized_score
+                       clips.personalized_score,
+                       clips.community_editorial_adjustment,
+                       clips.community_performance_adjustment,
+                       clips.community_semantic_adjustment
                 FROM clips JOIN videos ON videos.id = clips.video_id
                 ORDER BY clips.created_at, clips.id
                 """
@@ -1695,8 +1922,16 @@ class ProductStore:
                 ORDER BY id
                 """
             ).fetchall()
+            contribution_rows = connection.execute(
+                "SELECT creator_id, performance_enabled FROM contribution_settings"
+            ).fetchall()
 
         credentials = {row["creator_id"]: row for row in credential_rows}
+        contribution_settings = {
+            row["creator_id"]: bool(row["performance_enabled"])
+            for row in contribution_rows
+        }
+        community_learning = self.community_ml_report()
         accounts: dict[str, dict[str, Any]] = {
             row["id"]: {
                 "creator_id": row["id"],
@@ -1726,6 +1961,9 @@ class ProductStore:
                 "performance_report_count": 0,
                 "performance_platform_counts": Counter(),
                 "repurposing_feedback_count": 0,
+                "performance_contribution_enabled": contribution_settings.get(
+                    row["id"], False
+                ),
             }
             for row in creators
         }
@@ -1745,6 +1983,9 @@ class ProductStore:
         clip_durations: list[float] = []
         global_scores: list[float] = []
         personalized_scores: list[float] = []
+        community_editorial_adjustments: list[float] = []
+        community_performance_adjustments: list[float] = []
+        community_semantic_adjustments: list[float] = []
         for row in clips:
             account = accounts[row["creator_id"]]
             key = "custom_clip_count" if row["origin"] == "creator" else "model_clip_count"
@@ -1754,6 +1995,15 @@ class ProductStore:
             clip_durations.append(float(row["duration_seconds"]))
             global_scores.append(float(row["global_score"]))
             personalized_scores.append(float(row["personalized_score"]))
+            community_editorial_adjustments.append(
+                float(row["community_editorial_adjustment"])
+            )
+            community_performance_adjustments.append(
+                float(row["community_performance_adjustment"])
+            )
+            community_semantic_adjustments.append(
+                float(row["community_semantic_adjustment"])
+            )
 
         presented_by_rank: dict[int, set[str]] = {}
         selected_by_rank: dict[int, set[str]] = {}
@@ -1892,6 +2142,11 @@ class ProductStore:
 
         total_presented = sum(row["presented_model_clip_count"] for row in account_rows)
         total_selected = sum(row["selected_model_clip_count"] for row in account_rows)
+        community_learning["applied_adjustments"] = {
+            "editorial": numeric_summary(community_editorial_adjustments),
+            "performance": numeric_summary(community_performance_adjustments),
+            "semantic": numeric_summary(community_semantic_adjustments),
+        }
         rank_performance = []
         for rank in sorted(set(presented_by_rank) | set(selected_by_rank)):
             presented_count = len(presented_by_rank.get(rank, set()))
@@ -1976,6 +2231,7 @@ class ProductStore:
                     [float(row["attempt_count"]) for row in jobs]
                 ),
             },
+            "community_learning": community_learning,
             "accounts": account_rows,
             "interpretation": {
                 "selection_rate": (
@@ -2432,6 +2688,150 @@ class ProductStore:
             components["follows_per_view"] = float(row["follows"]) / exposure
         return components
 
+    @classmethod
+    def _performance_targets(
+        cls, examples: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], dict[str, float]]:
+        """Create within-creator outcome targets without treating raw reach as quality."""
+        components_by_clip = {
+            row["clip_id"]: cls._performance_components(row) for row in examples
+        }
+        examples = [row for row in examples if components_by_clip[row["clip_id"]]]
+        component_values: dict[str, list[float]] = {}
+        for row in examples:
+            for field, value in components_by_clip[row["clip_id"]].items():
+                component_values.setdefault(field, []).append(value)
+
+        targets: dict[str, float] = {}
+        for row in examples:
+            percentiles = [
+                cls._centered_percentile(value, component_values[field])
+                for field, value in components_by_clip[row["clip_id"]].items()
+                if len(component_values[field]) >= 2
+            ]
+            if percentiles:
+                targets[row["clip_id"]] = sum(percentiles) / len(percentiles)
+        return (
+            [row for row in examples if row["clip_id"] in targets],
+            targets,
+        )
+
+    @staticmethod
+    def _stored_preference_features(row: dict[str, Any]) -> list[float]:
+        return preference_features(
+            {
+                "duration_seconds": row["duration_seconds"],
+                "predicted_targets": json.loads(row["predicted_targets_json"]),
+                "multimodal_features": json.loads(
+                    row.get("multimodal_features_json") or "{}"
+                ),
+            }
+        )
+
+    def _community_editorial_profile(self) -> tuple[list[float], dict[str, Any]]:
+        """Fit a creator-balanced editorial prior from automatic product feedback."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT feedback_events.id, feedback_events.creator_id,
+                       feedback_events.clip_id, feedback_events.event_type,
+                       feedback_events.start_seconds AS event_start,
+                       feedback_events.end_seconds AS event_end,
+                       clips.start_seconds AS proposed_start,
+                       clips.end_seconds AS proposed_end,
+                       clips.duration_seconds, clips.predicted_targets_json,
+                       clips.multimodal_features_json
+                FROM feedback_events
+                JOIN clips ON clips.id = feedback_events.clip_id
+                WHERE feedback_events.event_type IN (
+                      'download_original', 'download_edited', 'custom_created',
+                      'review_closed_unselected', 'reject'
+                  )
+                ORDER BY feedback_events.id
+                """
+            ).fetchall()
+        latest_by_clip = {row["clip_id"]: dict(row) for row in rows}
+        by_creator: dict[str, list[dict[str, Any]]] = {}
+        for row in latest_by_clip.values():
+            by_creator.setdefault(row["creator_id"], []).append(row)
+        decision_count = len(latest_by_clip)
+        contributor_count = len(by_creator)
+        active = (
+            contributor_count >= MINIMUM_COMMUNITY_EDITORIAL_CREATORS
+            and decision_count >= MINIMUM_COMMUNITY_EDITORIAL_DECISIONS
+        )
+        weights = [0.0] * len(PREFERENCE_FEATURE_NAMES)
+        shrinkage = 0.0
+        if active:
+            creator_profiles: list[list[float]] = []
+            for examples in by_creator.values():
+                creator_weights = [0.0] * len(PREFERENCE_FEATURE_NAMES)
+                for row in examples:
+                    target = EDITORIAL_EVENT_WEIGHTS[row["event_type"]]
+                    if row["event_type"] == "download_edited":
+                        boundary_change = abs(
+                            float(row["event_start"]) - float(row["proposed_start"])
+                        ) + abs(float(row["event_end"]) - float(row["proposed_end"]))
+                        target *= 1.0 - min(0.5, boundary_change / 30.0)
+                    features = self._stored_preference_features(row)
+                    creator_weights = [
+                        weight + target * feature
+                        for weight, feature in zip(
+                            creator_weights, features, strict=True
+                        )
+                    ]
+                creator_profiles.append(
+                    [weight / len(examples) for weight in creator_weights]
+                )
+            shrinkage = decision_count / (decision_count + 30.0)
+            weights = [
+                shrinkage
+                * sum(profile[index] for profile in creator_profiles)
+                / len(creator_profiles)
+                for index in range(len(PREFERENCE_FEATURE_NAMES))
+            ]
+        return weights, {
+            "active": active,
+            "contributor_count": contributor_count,
+            "decision_count": decision_count,
+            "minimum_contributor_count": MINIMUM_COMMUNITY_EDITORIAL_CREATORS,
+            "minimum_decision_count": MINIMUM_COMMUNITY_EDITORIAL_DECISIONS,
+            "maximum_adjustment": MAXIMUM_COMMUNITY_EDITORIAL_ADJUSTMENT,
+            "shrinkage": shrinkage,
+            "feature_weights": dict(
+                zip(PREFERENCE_FEATURE_NAMES, weights, strict=True)
+            ),
+            "policy_version": CONTRIBUTION_POLICY_VERSION,
+        }
+
+    def apply_community_editorial(
+        self, candidates: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Apply the automatic community editorial prior to creator candidates."""
+        weights, metadata = self._community_editorial_profile()
+        adjusted = []
+        for candidate in candidates:
+            raw = sum(
+                weight * feature
+                for weight, feature in zip(
+                    weights, preference_features(candidate), strict=True
+                )
+            ) / len(PREFERENCE_FEATURE_NAMES)
+            adjustment = max(
+                -MAXIMUM_COMMUNITY_EDITORIAL_ADJUSTMENT,
+                min(MAXIMUM_COMMUNITY_EDITORIAL_ADJUSTMENT, raw),
+            )
+            adjusted.append(
+                {
+                    **candidate,
+                    "community_editorial_adjustment": adjustment,
+                    "community_lineage": {"editorial": metadata},
+                    "personalized_score": float(candidate["personalized_score"])
+                    + adjustment,
+                }
+            )
+        return adjusted, metadata
+
     @staticmethod
     def _semantic_vector(value: str | None) -> list[float] | None:
         if not value:
@@ -2628,26 +3028,7 @@ class ProductStore:
             ).fetchall()
         latest_by_clip = {row["clip_id"]: dict(row) for row in rows}
         examples = list(latest_by_clip.values())
-        components_by_clip = {
-            row["clip_id"]: self._performance_components(row) for row in examples
-        }
-        examples = [row for row in examples if components_by_clip[row["clip_id"]]]
-        component_values: dict[str, list[float]] = {}
-        for row in examples:
-            for field, value in components_by_clip[row["clip_id"]].items():
-                component_values.setdefault(field, []).append(value)
-
-        targets: dict[str, float] = {}
-        for row in examples:
-            percentiles = [
-                self._centered_percentile(value, component_values[field])
-                for field, value in components_by_clip[row["clip_id"]].items()
-                if len(component_values[field]) >= 2
-            ]
-            if percentiles:
-                targets[row["clip_id"]] = sum(percentiles) / len(percentiles)
-
-        eligible = [row for row in examples if row["clip_id"] in targets]
+        eligible, targets = self._performance_targets(examples)
         active = (
             len(eligible) >= MINIMUM_PERFORMANCE_EXAMPLES
             and max(targets.values(), default=0.0) != min(targets.values(), default=0.0)
@@ -2708,6 +3089,452 @@ class ProductStore:
                 negative_semantic_trends,
             ),
         }
+
+    def _source_context_signature(self, creator_id: str) -> dict[str, float]:
+        """Summarize long-form retention and duration without exposing a source curve."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT analytics_imports.report_json, videos.duration_seconds
+                FROM analytics_imports
+                JOIN videos ON videos.id = analytics_imports.video_id
+                WHERE analytics_imports.creator_id = ?
+                  AND analytics_imports.report_role = 'source_video'
+                """,
+                (creator_id,),
+            ).fetchall()
+        durations: list[float] = []
+        retention: list[float] = []
+        relative_retention: list[float] = []
+        for row in rows:
+            if row["duration_seconds"] is not None:
+                durations.append(float(row["duration_seconds"]))
+            report = json.loads(row["report_json"])
+            for point in report.get("retention_rows", []):
+                if point.get("audience_watch_ratio") is not None:
+                    retention.append(float(point["audience_watch_ratio"]))
+                if point.get("relative_retention_performance") is not None:
+                    relative_retention.append(
+                        float(point["relative_retention_performance"])
+                    )
+        signature = {}
+        if durations:
+            signature["source_duration_log_minutes"] = math.log1p(
+                sum(durations) / len(durations) / 60.0
+            )
+        if retention:
+            signature["source_retention_mean"] = sum(retention) / len(retention)
+        if relative_retention:
+            signature["source_relative_retention_mean"] = sum(
+                relative_retention
+            ) / len(relative_retention)
+        return signature
+
+    def _creator_content_centroid(
+        self, creator_id: str, platform: str
+    ) -> list[float] | None:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT clips.semantic_embedding_json
+                FROM clips JOIN videos ON videos.id = clips.video_id
+                WHERE videos.creator_id = ? AND clips.platform = ?
+                  AND clips.semantic_embedding_json IS NOT NULL
+                """,
+                (creator_id, platform),
+            ).fetchall()
+        vectors = [
+            vector
+            for row in rows
+            if (vector := self._semantic_vector(row["semantic_embedding_json"]))
+            is not None
+        ]
+        if not vectors or len({len(vector) for vector in vectors}) != 1:
+            return None
+        centroid = [
+            sum(vector[index] for vector in vectors) / len(vectors)
+            for index in range(len(vectors[0]))
+        ]
+        norm = math.sqrt(sum(value * value for value in centroid))
+        return [value / norm for value in centroid] if norm > 0 else None
+
+    def _audience_signature(
+        self,
+        creator_id: str,
+        platform: str,
+        examples: list[dict[str, Any]],
+    ) -> tuple[dict[str, float], list[float] | None]:
+        components = [self._performance_components(row) for row in examples]
+        fields = sorted({field for item in components for field in item})
+        signature = {
+            field: sum(item[field] for item in components if field in item)
+            / sum(field in item for item in components)
+            for field in fields
+        }
+        durations = [float(row["duration_seconds"]) for row in examples]
+        if durations:
+            signature["clip_duration_minutes"] = sum(durations) / len(durations) / 60.0
+        signature.update(self._source_context_signature(creator_id))
+        return signature, self._creator_content_centroid(creator_id, platform)
+
+    @staticmethod
+    def _cohort_distance(
+        target: tuple[dict[str, float], list[float] | None],
+        candidate: tuple[dict[str, float], list[float] | None],
+        ranges: dict[str, float],
+    ) -> tuple[float, list[str]]:
+        target_values, target_semantic = target
+        candidate_values, candidate_semantic = candidate
+        shared = sorted(set(target_values) & set(candidate_values))
+        distances = [
+            ((target_values[field] - candidate_values[field]) / ranges[field]) ** 2
+            for field in shared
+            if ranges.get(field, 0.0) > 0
+        ]
+        used = [field for field in shared if ranges.get(field, 0.0) > 0]
+        if (
+            target_semantic is not None
+            and candidate_semantic is not None
+            and len(target_semantic) == len(candidate_semantic)
+        ):
+            similarity = sum(
+                left * right
+                for left, right in zip(target_semantic, candidate_semantic, strict=True)
+            )
+            distances.append((1.0 - max(-1.0, min(1.0, similarity))) ** 2)
+            used.append("content_semantics")
+        return (sum(distances) / len(distances) if distances else 1.0), used
+
+    @classmethod
+    def _community_semantic_trends(
+        cls,
+        examples_by_creator: dict[str, list[dict[str, Any]]],
+        targets_by_creator: dict[str, dict[str, float]],
+        positive: bool,
+    ) -> list[dict[str, Any]]:
+        scores: dict[str, float] = {}
+        creator_support: dict[str, set[str]] = {}
+        clip_support: Counter[str] = Counter()
+        for creator_id, examples in examples_by_creator.items():
+            targets = targets_by_creator[creator_id]
+            for row in examples:
+                outcome = targets[row["clip_id"]]
+                for term in cls._semantic_terms(str(row["transcript_text"])):
+                    scores[term] = scores.get(term, 0.0) + outcome
+                    creator_support.setdefault(term, set()).add(creator_id)
+                    clip_support[term] += 1
+        ranked = [
+            (term, score)
+            for term, score in scores.items()
+            if len(creator_support[term]) >= 2 and ((score > 0) if positive else (score < 0))
+        ]
+        ranked.sort(
+            key=lambda item: (
+                -item[1] if positive else item[1],
+                -len(creator_support[item[0]]),
+                item[0],
+            )
+        )
+        return [
+            {
+                "term": term,
+                "creator_support": len(creator_support[term]),
+                "clip_support": clip_support[term],
+                "association": round(score, 3),
+            }
+            for term, score in ranked[:6]
+        ]
+
+    @staticmethod
+    def _community_performance_summary(
+        contributor_count: int,
+        clip_count: int,
+        weights: list[float],
+        positive_terms: list[dict[str, Any]],
+    ) -> str | None:
+        if contributor_count < MINIMUM_COMMUNITY_PERFORMANCE_CREATORS:
+            return None
+        feature_phrases = {
+            "hook": ("stronger predicted hooks", "weaker predicted hooks"),
+            "completeness": ("more complete ideas", "less complete ideas"),
+            "payoff": ("clearer payoffs", "weaker payoffs"),
+            "clarity": ("clearer delivery", "less clear delivery"),
+            "duration": ("longer clips", "shorter clips"),
+            "audio_urgency": ("more urgent audio", "calmer audio"),
+            "visual_excitement": ("more visual activity", "less visual activity"),
+        }
+        ranked = sorted(
+            zip(PREFERENCE_FEATURE_NAMES, weights, strict=True),
+            key=lambda item: (-abs(item[1]), item[0]),
+        )
+        phrases = [
+            feature_phrases[field][0 if weight > 0 else 1]
+            for field, weight in ranked
+            if abs(weight) > 1e-6
+        ][:2]
+        if positive_terms:
+            phrases.append(
+                "recurring themes such as "
+                + ", ".join(item["term"] for item in positive_terms[:3])
+            )
+        evidence = "; ".join(phrases) if phrases else "no stable feature direction yet"
+        return (
+            f"Across {contributor_count} comparable opted-in creators and {clip_count} clips, "
+            f"stronger outcomes are associated with {evidence}. These are aggregate, "
+            "correlational patterns rather than causal claims."
+        )
+
+    def _community_performance_profile(
+        self, creator_id: str, platform: str
+    ) -> tuple[list[float], list[tuple[list[float], float]], dict[str, Any]]:
+        """Fit a privacy-thresholded soft cohort from opted-in comparable creators."""
+        select = """
+            SELECT performance_reports.*, clips.duration_seconds,
+                   clips.predicted_targets_json, clips.transcript_text,
+                   clips.semantic_embedding_json, clips.multimodal_features_json
+            FROM performance_reports
+            JOIN clips ON clips.id = performance_reports.clip_id
+        """
+        with self._connect() as connection:
+            contributed_rows = connection.execute(
+                select
+                + """
+                JOIN contribution_settings
+                  ON contribution_settings.creator_id = performance_reports.creator_id
+                WHERE performance_reports.platform = ?
+                  AND performance_reports.creator_id != ?
+                  AND contribution_settings.performance_enabled = 1
+                ORDER BY performance_reports.id
+                """,
+                (platform, creator_id),
+            ).fetchall()
+            target_rows = connection.execute(
+                select
+                + """
+                WHERE performance_reports.platform = ?
+                  AND performance_reports.creator_id = ?
+                ORDER BY performance_reports.id
+                """,
+                (platform, creator_id),
+            ).fetchall()
+        latest_contributed = {
+            (row["creator_id"], row["clip_id"]): dict(row)
+            for row in contributed_rows
+        }
+        latest_target = {row["clip_id"]: dict(row) for row in target_rows}
+        raw_by_creator: dict[str, list[dict[str, Any]]] = {}
+        for row in latest_contributed.values():
+            raw_by_creator.setdefault(row["creator_id"], []).append(row)
+
+        eligible_by_creator: dict[str, list[dict[str, Any]]] = {}
+        targets_by_creator: dict[str, dict[str, float]] = {}
+        for contributor_id, examples in raw_by_creator.items():
+            eligible, targets = self._performance_targets(examples)
+            if len(eligible) >= MINIMUM_COMMUNITY_PER_CREATOR_CLIPS:
+                eligible_by_creator[contributor_id] = eligible
+                targets_by_creator[contributor_id] = targets
+
+        signatures = {
+            contributor_id: self._audience_signature(
+                contributor_id, platform, eligible
+            )
+            for contributor_id, eligible in eligible_by_creator.items()
+        }
+        target_signature = self._audience_signature(
+            creator_id, platform, list(latest_target.values())
+        )
+        value_fields = sorted(
+            {
+                field
+                for signature, _ in signatures.values()
+                for field in signature
+            }
+        )
+        ranges = {
+            field: max(
+                signature[field]
+                for signature, _ in signatures.values()
+                if field in signature
+            )
+            - min(
+                signature[field]
+                for signature, _ in signatures.values()
+                if field in signature
+            )
+            for field in value_fields
+        }
+        distances = []
+        comparable_signals: set[str] = set()
+        for contributor_id, signature in signatures.items():
+            distance, used = self._cohort_distance(
+                target_signature, signature, ranges
+            )
+            distances.append((distance, contributor_id))
+            comparable_signals.update(used)
+        distances.sort(key=lambda item: (item[0], item[1]))
+        selected_ids = [
+            contributor_id for _, contributor_id in distances[:5]
+        ]
+        selected_clip_count = sum(
+            len(eligible_by_creator[contributor_id])
+            for contributor_id in selected_ids
+        )
+        if selected_clip_count < MINIMUM_COMMUNITY_PERFORMANCE_CLIPS:
+            selected_ids = sorted(eligible_by_creator)
+            selected_clip_count = sum(
+                len(eligible_by_creator[contributor_id])
+                for contributor_id in selected_ids
+            )
+        selected_outcomes = [
+            outcome
+            for contributor_id in selected_ids
+            for outcome in targets_by_creator[contributor_id].values()
+        ]
+        active = (
+            len(selected_ids) >= MINIMUM_COMMUNITY_PERFORMANCE_CREATORS
+            and selected_clip_count >= MINIMUM_COMMUNITY_PERFORMANCE_CLIPS
+            and max(selected_outcomes, default=0.0)
+            != min(selected_outcomes, default=0.0)
+        )
+        weights = [0.0] * len(PREFERENCE_FEATURE_NAMES)
+        semantic_examples: list[tuple[list[float], float]] = []
+        shrinkage = 0.0
+        if active:
+            creator_profiles = []
+            for contributor_id in selected_ids:
+                eligible = eligible_by_creator[contributor_id]
+                targets = targets_by_creator[contributor_id]
+                creator_weights = [0.0] * len(PREFERENCE_FEATURE_NAMES)
+                for row in eligible:
+                    features = self._stored_preference_features(row)
+                    outcome = targets[row["clip_id"]]
+                    creator_weights = [
+                        weight + outcome * feature
+                        for weight, feature in zip(
+                            creator_weights, features, strict=True
+                        )
+                    ]
+                    vector = self._semantic_vector(row["semantic_embedding_json"])
+                    if vector is not None:
+                        semantic_examples.append((vector, outcome))
+                creator_profiles.append(
+                    [weight / len(eligible) for weight in creator_weights]
+                )
+            shrinkage = selected_clip_count / (selected_clip_count + 30.0)
+            weights = [
+                shrinkage
+                * sum(profile[index] for profile in creator_profiles)
+                / len(creator_profiles)
+                for index in range(len(PREFERENCE_FEATURE_NAMES))
+            ]
+        selected_examples = {
+            contributor_id: eligible_by_creator[contributor_id]
+            for contributor_id in selected_ids
+        }
+        selected_targets = {
+            contributor_id: targets_by_creator[contributor_id]
+            for contributor_id in selected_ids
+        }
+        positive_terms = (
+            self._community_semantic_trends(
+                selected_examples, selected_targets, positive=True
+            )
+            if active
+            else []
+        )
+        negative_terms = (
+            self._community_semantic_trends(
+                selected_examples, selected_targets, positive=False
+            )
+            if active
+            else []
+        )
+        cohort_id = (
+            "cohort_"
+            + hashlib.sha256("|".join(sorted(selected_ids)).encode()).hexdigest()[:10]
+            if active
+            else None
+        )
+        strategy = (
+            "nearest_audience_content_neighborhood_v1"
+            if comparable_signals
+            else "global_opt_in_pool_v1"
+        )
+        return weights, semantic_examples, {
+            "active": active,
+            "platform": platform,
+            "cohort_id": cohort_id,
+            "strategy": strategy,
+            "contributor_count": len(selected_ids),
+            "eligible_clip_count": selected_clip_count,
+            "minimum_contributor_count": MINIMUM_COMMUNITY_PERFORMANCE_CREATORS,
+            "minimum_clip_count": MINIMUM_COMMUNITY_PERFORMANCE_CLIPS,
+            "minimum_clips_per_contributor": MINIMUM_COMMUNITY_PER_CREATOR_CLIPS,
+            "comparable_signals": sorted(comparable_signals),
+            "shrinkage": shrinkage,
+            "maximum_adjustment": MAXIMUM_COMMUNITY_PERFORMANCE_ADJUSTMENT,
+            "feature_weights": dict(
+                zip(PREFERENCE_FEATURE_NAMES, weights, strict=True)
+            ),
+            "semantic_example_count": len(semantic_examples),
+            "positive_semantic_trends": positive_terms,
+            "negative_semantic_trends": negative_terms,
+            "insight_summary": self._community_performance_summary(
+                len(selected_ids), selected_clip_count, weights, positive_terms
+            ),
+            "policy_version": CONTRIBUTION_POLICY_VERSION,
+        }
+
+    def apply_community_performance(
+        self,
+        creator_id: str,
+        candidates: list[dict[str, Any]],
+        platform: str,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Apply a bounded audience/content neighborhood model across opted-in accounts."""
+        weights, semantic_examples, metadata = self._community_performance_profile(
+            creator_id, platform
+        )
+        adjusted = []
+        for candidate in candidates:
+            features = preference_features(candidate)
+            raw = sum(
+                weight * feature
+                for weight, feature in zip(weights, features, strict=True)
+            ) / len(features)
+            structured = max(
+                -MAXIMUM_COMMUNITY_STRUCTURED_ADJUSTMENT,
+                min(MAXIMUM_COMMUNITY_STRUCTURED_ADJUSTMENT, raw),
+            )
+            semantic = self._semantic_outcome_adjustment(
+                candidate.get("semantic_embedding"),
+                semantic_examples,
+                metadata["shrinkage"],
+            )
+            semantic *= (
+                MAXIMUM_COMMUNITY_SEMANTIC_ADJUSTMENT
+                / MAXIMUM_SEMANTIC_PERFORMANCE_ADJUSTMENT
+            )
+            combined = structured + semantic
+            if abs(combined) > MAXIMUM_COMMUNITY_PERFORMANCE_ADJUSTMENT:
+                scale = MAXIMUM_COMMUNITY_PERFORMANCE_ADJUSTMENT / abs(combined)
+                structured *= scale
+                semantic *= scale
+            adjusted.append(
+                {
+                    **candidate,
+                    "community_performance_adjustment": structured,
+                    "community_semantic_adjustment": semantic,
+                    "community_lineage": {
+                        **candidate.get("community_lineage", {}),
+                        "performance": metadata,
+                    },
+                    "personalized_score": float(candidate["personalized_score"])
+                    + structured
+                    + semantic,
+                }
+            )
+        return adjusted, metadata
 
     def personalize_candidates(
         self,
@@ -2941,6 +3768,28 @@ class ProductStore:
             "platform_performance": platform_performance,
         }
 
+    def creator_product_summary(self, creator_id: str) -> dict[str, Any]:
+        """Return useful audience insights without operational model diagnostics."""
+        summary = self.creator_summary(creator_id)
+        return {
+            "personalization_active": summary["personalization_active"],
+            "platform_performance": {
+                platform: {
+                    "semantic_active": performance["semantic_active"],
+                    "insight_summary": performance["insight_summary"],
+                    "positive_semantic_trends": [
+                        {"term": trend["term"]}
+                        for trend in performance["positive_semantic_trends"]
+                    ],
+                    "negative_semantic_trends": [
+                        {"term": trend["term"]}
+                        for trend in performance["negative_semantic_trends"]
+                    ],
+                }
+                for platform, performance in summary["platform_performance"].items()
+            },
+        }
+
     def feedback_training_records(
         self, creator_id: str | None = None
     ) -> list[dict[str, Any]]:
@@ -3064,7 +3913,19 @@ class ProductStore:
                             ],
                             "publishability": clip["publishability_adjustment"],
                             "platform": clip.get("platform_adjustment", 0.0),
+                            "community_editorial": clip.get(
+                                "community_editorial_adjustment", 0.0
+                            ),
+                            "community_performance": clip.get(
+                                "community_performance_adjustment", 0.0
+                            ),
+                            "community_semantic": clip.get(
+                                "community_semantic_adjustment", 0.0
+                            ),
                         },
+                        "community_lineage": json.loads(
+                            clip.get("community_lineage_json") or "{}"
+                        ),
                         "publishability": json.loads(clip["publishability_json"]),
                         "editorial_label": latest_label["event_type"]
                         if latest_label
@@ -3085,6 +3946,9 @@ class ProductStore:
         clip["publishability"] = json.loads(clip.pop("publishability_json", "{}"))
         clip["multimodal_features"] = json.loads(
             clip.pop("multimodal_features_json", "{}")
+        )
+        clip["community_lineage"] = json.loads(
+            clip.pop("community_lineage_json", "{}")
         )
         clip.pop("semantic_embedding_json", None)
         return clip
