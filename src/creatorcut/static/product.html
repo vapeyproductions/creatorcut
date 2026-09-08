@@ -20,24 +20,47 @@
         <p>One long video in. Three ranked clips out.</p>
         <a id="admin-link" class="plain-link" href="/admin" hidden>ML OBSERVATORY</a>
         <button id="model-report-button" class="plain-button" type="button" disabled>MODEL REPORT</button>
+        <span id="account-label" class="account-label" hidden></span>
+        <button id="logout-button" class="plain-button" type="button" hidden>LOG OUT</button>
       </div>
     </header>
 
     <main>
-      <section id="upload-section" aria-labelledby="upload-title">
+      <section id="auth-section" aria-labelledby="auth-title">
+        <p class="section-number">ACCOUNT ACCESS</p>
+        <h1 id="auth-title">Your clips should belong to you</h1>
+        <p class="auth-intro">
+          Sign in to keep uploads, editing decisions, analytics, and personalization isolated
+          from every other creator profile.
+        </p>
+        <div class="auth-grid">
+          <form id="login-form" class="auth-form">
+            <h2>Sign in</h2>
+            <label>Email <input name="email" type="email" autocomplete="email" required /></label>
+            <label>Password <input name="password" type="password" autocomplete="current-password" required /></label>
+            <button type="submit">SIGN IN</button>
+            <p class="error" role="alert" hidden></p>
+          </form>
+          <form id="register-form" class="auth-form">
+            <h2>Create account</h2>
+            <label>Creator or channel name <input name="display_name" type="text" maxlength="80" autocomplete="name" required /></label>
+            <label>Email <input name="email" type="email" maxlength="254" autocomplete="email" required /></label>
+            <label>Password <input name="password" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required /></label>
+            <p class="field-note">Use at least 12 characters.</p>
+            <button type="submit">CREATE ACCOUNT</button>
+            <p class="error" role="alert" hidden></p>
+          </form>
+        </div>
+        <p class="small-print">
+          Passwords are salted and deliberately slow-hashed. Browser sessions are revocable;
+          creator IDs are never accepted as proof of identity.
+        </p>
+      </section>
+
+      <section id="upload-section" aria-labelledby="upload-title" hidden>
         <p class="section-number">01 / SOURCE VIDEO</p>
         <h1 id="upload-title">Choose a video to process</h1>
         <form id="upload-form">
-          <label for="creator-name">Creator profile</label>
-          <input
-            id="creator-name"
-            name="creator_name"
-            type="text"
-            maxlength="80"
-            value="My channel"
-            required
-          />
-
           <label for="video-file">Video file</label>
           <input
             id="video-file"

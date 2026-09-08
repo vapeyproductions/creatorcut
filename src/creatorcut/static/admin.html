@@ -44,7 +44,7 @@
           <p>Selection is preference evidence, not ground-truth accuracy.</p>
         </div>
         <div class="metric-grid">
-          <article><strong id="account-count">0</strong><span>creator accounts</span></article>
+          <article><strong id="account-count">0</strong><span>authenticated accounts</span></article>
           <article><strong id="video-count">0</strong><span>source videos</span></article>
           <article><strong id="clip-count">0</strong><span>saved clips</span></article>
           <article><strong id="presented-count">0</strong><span>model clips presented</span></article>
@@ -124,12 +124,12 @@
       <section aria-labelledby="accounts-title">
         <div class="section-heading">
           <div><p class="section-label">06 / ACCOUNT COVERAGE</p><h2 id="accounts-title">Creator accounts</h2></div>
-          <p>Local profile names and aggregate counts only.</p>
+          <p>Identity, role, and aggregate product evidence per account.</p>
         </div>
         <div class="table-scroll">
           <table>
             <thead>
-              <tr><th>Account</th><th>Videos</th><th>Model clips</th><th>Selected</th><th>Rate</th><th>Custom</th><th>Edits</th><th>Median edit</th><th>Analytics</th><th>Outcomes</th></tr>
+              <tr><th>Account</th><th>Access</th><th>Videos</th><th>Model clips</th><th>Selected</th><th>Rate</th><th>Custom</th><th>Edits</th><th>Median edit</th><th>Analytics</th><th>Outcomes</th></tr>
             </thead>
             <tbody id="account-body"></tbody>
           </table>
@@ -152,7 +152,7 @@
 
     <footer>
       This view intentionally omits transcript text, local media paths, and raw analytics rows.
-      A public deployment must place it behind administrator authentication.
+      Access requires an authenticated CreatorCut administrator account.
     </footer>
     <script src="/assets/admin.js" defer></script>
   </body>

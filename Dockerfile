@@ -18,6 +18,4 @@ RUN python -m pip install --no-cache-dir ".[semantic]" \
     && chown -R creatorcut:creatorcut /app/runtime /app/artifacts
 
 USER creatorcut
-EXPOSE 8780
-
-CMD ["creatorcut-web", "--host", "0.0.0.0", "--worker-mode", "external", "--database", "/app/runtime/creatorcut.sqlite", "--upload-dir", "/app/runtime/uploads", "--work-dir", "/app/runtime/work", "--model-cache", "/app/artifacts/whisper", "--semantic-cache", "/app/artifacts/huggingface"]
+CMD ["creatorcut-worker", "--database", "/app/runtime/creatorcut.sqlite", "--work-dir", "/app/runtime/work", "--model-cache", "/app/artifacts/whisper", "--semantic-cache", "/app/artifacts/huggingface"]

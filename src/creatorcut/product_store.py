@@ -14,6 +14,15 @@ from pathlib import Path
 from statistics import median
 from typing import Any
 
+from creatorcut.account_security import (
+    DUMMY_PASSWORD_VERIFIER,
+    create_password_verifier,
+    normalize_display_name,
+    normalize_email,
+    session_credentials,
+    session_token_digest,
+    verify_password,
+)
 from creatorcut.analytics import performance_values
 
 EDITORIAL_EVENT_WEIGHTS = {
@@ -164,6 +173,40 @@ class ProductStore:
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS account_credentials (
+                creator_id TEXT PRIMARY KEY REFERENCES creator_profiles(id) ON DELETE CASCADE,
+                email TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                password_algorithm TEXT NOT NULL,
+                password_iterations INTEGER NOT NULL,
+                password_salt TEXT NOT NULL,
+                password_digest TEXT NOT NULL,
+                is_admin INTEGER NOT NULL DEFAULT 0 CHECK(is_admin IN (0, 1)),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS auth_sessions (
+                token_digest TEXT PRIMARY KEY,
+                creator_id TEXT NOT NULL
+                    REFERENCES account_credentials(creator_id) ON DELETE CASCADE,
+                csrf_token TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS export_downloads (
+                token TEXT PRIMARY KEY,
+                creator_id TEXT NOT NULL REFERENCES creator_profiles(id) ON DELETE CASCADE,
+                clip_id TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+                file_path TEXT NOT NULL,
+                download_name TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS videos (
                 id TEXT PRIMARY KEY,
                 creator_id TEXT NOT NULL REFERENCES creator_profiles(id),
@@ -276,6 +319,12 @@ class ProductStore:
             )
             """,
             "CREATE INDEX IF NOT EXISTS idx_videos_creator_id ON videos(creator_id)",
+            "CREATE INDEX IF NOT EXISTS idx_auth_sessions_creator_id ON auth_sessions(creator_id)",
+            "CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at)",
+            """
+            CREATE INDEX IF NOT EXISTS idx_export_downloads_expiry
+            ON export_downloads(expires_at)
+            """,
             "CREATE INDEX IF NOT EXISTS idx_clips_video_id ON clips(video_id)",
             "CREATE INDEX IF NOT EXISTS idx_feedback_creator_id ON feedback_events(creator_id)",
             "CREATE INDEX IF NOT EXISTS idx_feedback_clip_id ON feedback_events(clip_id)",
@@ -391,6 +440,284 @@ class ProductStore:
                 )
                 return {"id": normalized_id, "display_name": normalized_name}
             return {"id": existing["id"], "display_name": existing["display_name"]}
+
+    @staticmethod
+    def _public_account(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "creator_id": row["creator_id"],
+            "display_name": row["display_name"],
+            "email": row["email"],
+            "is_admin": bool(row["is_admin"]),
+        }
+
+    def register_account(
+        self,
+        display_name: Any,
+        email: Any,
+        password: Any,
+        *,
+        is_admin: bool = False,
+        admin_if_first: bool = False,
+    ) -> dict[str, Any]:
+        """Create a credentialed creator profile in one transaction."""
+        checked_name = normalize_display_name(display_name)
+        checked_email = normalize_email(email)
+        verifier = create_password_verifier(password)
+        creator_id = f"creator_{uuid.uuid4().hex}"
+        now = utc_now()
+        try:
+            with self._write_lock, self._connect() as connection:
+                granted_admin = bool(is_admin)
+                if admin_if_first and not granted_admin:
+                    granted_admin = (
+                        connection.execute(
+                            "SELECT COUNT(*) FROM account_credentials"
+                        ).fetchone()[0]
+                        == 0
+                    )
+                connection.execute(
+                    "INSERT INTO creator_profiles(id, display_name, created_at) VALUES (?, ?, ?)",
+                    (creator_id, checked_name, now),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO account_credentials(
+                        creator_id, email, password_algorithm, password_iterations,
+                        password_salt, password_digest, is_admin, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        creator_id,
+                        checked_email,
+                        verifier["algorithm"],
+                        verifier["iterations"],
+                        verifier["salt"],
+                        verifier["digest"],
+                        int(granted_admin),
+                        now,
+                        now,
+                    ),
+                )
+        except sqlite3.IntegrityError as error:
+            if "email" in str(error).casefold() or "unique" in str(error).casefold():
+                raise ValueError("An account with that email already exists") from error
+            raise
+        return {
+            "creator_id": creator_id,
+            "display_name": checked_name,
+            "email": checked_email,
+            "is_admin": granted_admin,
+        }
+
+    def authenticate_account(self, email: Any, password: Any) -> dict[str, Any] | None:
+        """Verify credentials while doing equivalent password work for unknown emails."""
+        try:
+            checked_email = normalize_email(email)
+        except ValueError:
+            checked_email = "invalid@example.invalid"
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT account_credentials.creator_id, account_credentials.email,
+                       account_credentials.password_algorithm,
+                       account_credentials.password_iterations,
+                       account_credentials.password_salt,
+                       account_credentials.password_digest,
+                       account_credentials.is_admin, creator_profiles.display_name
+                FROM account_credentials
+                JOIN creator_profiles ON creator_profiles.id = account_credentials.creator_id
+                WHERE account_credentials.email = ? COLLATE NOCASE
+                """,
+                (checked_email,),
+            ).fetchone()
+        verifier = (
+            {
+                "algorithm": row["password_algorithm"],
+                "iterations": row["password_iterations"],
+                "salt": row["password_salt"],
+                "digest": row["password_digest"],
+            }
+            if row is not None
+            else DUMMY_PASSWORD_VERIFIER
+        )
+        if not verify_password(password, verifier) or row is None:
+            return None
+        return self._public_account(row)
+
+    def create_auth_session(self, creator_id: str) -> dict[str, Any]:
+        """Issue an opaque seven-day session and delete expired records."""
+        session = session_credentials()
+        with self._write_lock, self._connect() as connection:
+            account = connection.execute(
+                "SELECT 1 FROM account_credentials WHERE creator_id = ?", (creator_id,)
+            ).fetchone()
+            if account is None:
+                raise KeyError(creator_id)
+            connection.execute(
+                "DELETE FROM auth_sessions WHERE expires_at <= ?", (session["created_at"],)
+            )
+            connection.execute(
+                """
+                INSERT INTO auth_sessions(
+                    token_digest, creator_id, csrf_token, created_at, expires_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    session["token_digest"],
+                    creator_id,
+                    session["csrf_token"],
+                    session["created_at"],
+                    session["expires_at"],
+                ),
+            )
+        return {
+            "token": session["token"],
+            "csrf_token": session["csrf_token"],
+            "expires_at": session["expires_at"],
+        }
+
+    def account_for_session(self, token: str | None) -> dict[str, Any] | None:
+        """Resolve a valid opaque session to its creator and authorization role."""
+        if not token or len(token) > 256:
+            return None
+        digest = session_token_digest(token)
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT account_credentials.creator_id, account_credentials.email,
+                       account_credentials.is_admin, creator_profiles.display_name,
+                       auth_sessions.csrf_token, auth_sessions.expires_at
+                FROM auth_sessions
+                JOIN account_credentials
+                  ON account_credentials.creator_id = auth_sessions.creator_id
+                JOIN creator_profiles ON creator_profiles.id = account_credentials.creator_id
+                WHERE auth_sessions.token_digest = ? AND auth_sessions.expires_at > ?
+                """,
+                (digest, utc_now()),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            **self._public_account(row),
+            "csrf_token": row["csrf_token"],
+            "session_expires_at": row["expires_at"],
+        }
+
+    def delete_auth_session(self, token: str | None) -> None:
+        """Revoke a browser session without exposing whether it existed."""
+        if not token or len(token) > 256:
+            return
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                "DELETE FROM auth_sessions WHERE token_digest = ?",
+                (session_token_digest(token),),
+            )
+
+    def authenticated_account_count(self) -> int:
+        """Count credentialed accounts, excluding legacy local-only profiles."""
+        with self._connect() as connection:
+            return int(connection.execute("SELECT COUNT(*) FROM account_credentials").fetchone()[0])
+
+    def has_admin_account(self) -> bool:
+        """Return whether an administrator has been explicitly provisioned."""
+        with self._connect() as connection:
+            return (
+                connection.execute(
+                    "SELECT 1 FROM account_credentials WHERE is_admin = 1 LIMIT 1"
+                ).fetchone()
+                is not None
+            )
+
+    def promote_account_to_admin(self, email: Any) -> dict[str, Any]:
+        """Grant the administrator role to an existing credentialed account."""
+        checked_email = normalize_email(email)
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE account_credentials SET is_admin = 1, updated_at = ?
+                WHERE email = ? COLLATE NOCASE
+                """,
+                (utc_now(), checked_email),
+            )
+            row = connection.execute(
+                """
+                SELECT account_credentials.creator_id, account_credentials.email,
+                       account_credentials.is_admin, creator_profiles.display_name
+                FROM account_credentials
+                JOIN creator_profiles ON creator_profiles.id = account_credentials.creator_id
+                WHERE account_credentials.email = ? COLLATE NOCASE
+                """,
+                (checked_email,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(checked_email)
+        return self._public_account(row)
+
+    def create_export_download(
+        self, creator_id: str, clip_id: str, file_path: Path
+    ) -> dict[str, str]:
+        """Create a short-lived, owner-bound download instead of exposing a file name."""
+        token = uuid.uuid4().hex + uuid.uuid4().hex
+        created = datetime.now(UTC)
+        expires = created + timedelta(hours=24)
+        with self._write_lock, self._connect() as connection:
+            owner = connection.execute(
+                """
+                SELECT videos.creator_id
+                FROM clips JOIN videos ON videos.id = clips.video_id
+                WHERE clips.id = ?
+                """,
+                (clip_id,),
+            ).fetchone()
+            if owner is None or owner["creator_id"] != creator_id:
+                raise KeyError(clip_id)
+            connection.execute(
+                "DELETE FROM export_downloads WHERE expires_at <= ?", (created.isoformat(),)
+            )
+            connection.execute(
+                """
+                INSERT INTO export_downloads(
+                    token, creator_id, clip_id, file_path, download_name, created_at, expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    token,
+                    creator_id,
+                    clip_id,
+                    file_path.as_posix(),
+                    file_path.name,
+                    created.isoformat(),
+                    expires.isoformat(),
+                ),
+            )
+        return {
+            "token": token,
+            "download_name": file_path.name,
+            "expires_at": expires.isoformat(),
+        }
+
+    def export_download_for_account(
+        self, token: str, creator_id: str
+    ) -> dict[str, Any]:
+        """Resolve a download only when the current creator owns it and it remains valid."""
+        if len(token) != 64 or not all(character in "0123456789abcdef" for character in token):
+            raise KeyError(token)
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT file_path, download_name, expires_at
+                FROM export_downloads
+                WHERE token = ? AND creator_id = ? AND expires_at > ?
+                """,
+                (token, creator_id, utc_now()),
+            ).fetchone()
+        if row is None:
+            raise KeyError(token)
+        return {
+            "path": Path(row["file_path"]),
+            "download_name": row["download_name"],
+            "expires_at": row["expires_at"],
+        }
 
     def create_video(
         self, creator_id: str, original_filename: str, media_path: Path
@@ -1220,6 +1547,12 @@ class ProductStore:
                 ORDER BY created_at, id
                 """
             ).fetchall()
+            credential_rows = connection.execute(
+                """
+                SELECT creator_id, email, is_admin, created_at
+                FROM account_credentials ORDER BY created_at, creator_id
+                """
+            ).fetchall()
             videos = connection.execute(
                 """
                 SELECT id, creator_id, original_filename, status, duration_seconds
@@ -1268,11 +1601,23 @@ class ProductStore:
                 """
             ).fetchall()
 
+        credentials = {row["creator_id"]: row for row in credential_rows}
         accounts: dict[str, dict[str, Any]] = {
             row["id"]: {
                 "creator_id": row["id"],
                 "display_name": row["display_name"],
                 "created_at": row["created_at"],
+                "account_status": (
+                    "authenticated" if row["id"] in credentials else "legacy_local_profile"
+                ),
+                "email": credentials[row["id"]]["email"]
+                if row["id"] in credentials
+                else None,
+                "role": (
+                    "administrator"
+                    if row["id"] in credentials and credentials[row["id"]]["is_admin"]
+                    else "creator"
+                ),
                 "video_count": 0,
                 "model_clip_count": 0,
                 "custom_clip_count": 0,
@@ -1446,6 +1791,8 @@ class ProductStore:
             "generated_at": utc_now(),
             "scope": {
                 "creator_account_count": len(account_rows),
+                "authenticated_account_count": len(credential_rows),
+                "legacy_profile_count": len(account_rows) - len(credential_rows),
                 "source_video_count": len(videos),
                 "clip_count": len(clips),
             },

@@ -99,7 +99,7 @@ function renderReport(report) {
   addDefinition(elements.releaseDetails, "Evaluation set", `${holdout.video_count || 0} videos / ${holdout.clip_count || 0} clips`);
   addDefinition(elements.releaseDetails, "Model digest", holdout.frozen_model_sha256 || "—");
 
-  elements.accountCount.textContent = report.scope.creator_account_count;
+  elements.accountCount.textContent = report.scope.authenticated_account_count;
   elements.videoCount.textContent = report.scope.source_video_count;
   elements.clipCount.textContent = report.scope.clip_count;
   elements.presentedCount.textContent = report.model_behavior.presented_model_clip_count;
@@ -184,16 +184,20 @@ function renderReport(report) {
   if (!report.accounts.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
-    cell.colSpan = 10;
+    cell.colSpan = 11;
     cell.textContent = "No creator accounts have been created yet.";
     row.append(cell);
     elements.accountBody.append(row);
   } else {
     for (const account of report.accounts) {
       const row = document.createElement("tr");
-      const accountLabel = `${account.display_name}\n${account.creator_id}`;
+      const accountLabel = account.email
+        ? `${account.display_name}\n${account.email}`
+        : `${account.display_name}\nlegacy local profile`;
+      const accessLabel = `${account.role}\n${account.account_status.replaceAll("_", " ")}`;
       for (const value of [
         accountLabel,
+        accessLabel,
         account.video_count,
         account.model_clip_count,
         account.selected_model_clip_count,

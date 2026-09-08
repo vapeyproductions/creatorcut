@@ -6,15 +6,16 @@ Rather than treating clip selection as an opaque generative-AI task, CreatorCut 
 
 ## Current product workflow
 
-1. Upload a long-form MP4, MOV, M4V, or WebM video.
-2. Transcribe it with word timestamps and generate sentence-aligned candidates.
-3. Generate candidate short-form clips.
-4. Rank candidates using an explainable ML model.
-5. Preview and adjust the three recommended intervals.
-6. Export the source aspect ratio, a subject-aware vertical 9:16 crop, or a vertical clip with
+1. Create a private creator account or sign in.
+2. Upload a long-form MP4, MOV, M4V, or WebM video.
+3. Transcribe it with word timestamps and generate sentence-aligned candidates.
+4. Generate candidate short-form clips.
+5. Rank candidates using an explainable ML model.
+6. Preview and adjust the three recommended intervals.
+7. Export the source aspect ratio, a subject-aware vertical 9:16 crop, or a vertical clip with
    burned captions.
-7. Generate editable, transcript-grounded posts for four platforms.
-8. Capture editorial decisions, post-copy edits, and optional YouTube analytics for bounded feature and semantic
+8. Generate editable, transcript-grounded posts for four platforms.
+9. Capture editorial decisions, post-copy edits, and optional YouTube analytics for bounded feature and semantic
    personalization.
 
 ## ML system
@@ -65,28 +66,35 @@ Enable the separate local cross-account ML observatory when administering the sy
 creatorcut-web --enable-admin-dashboard
 ```
 
+The first account registered on a new local database in this mode becomes its administrator.
+Existing installations can promote a registered account without exposing its password on the
+command line:
+
+```bash
+creatorcut-account promote-admin --email creator@example.com
+```
+
 The product then links to `/admin`, where offline holdout evidence is shown separately from live
 selection, rank, clip-length, boundary-edit, input-format, YouTube analytics-coverage, account, and
-job-state signals. It is disabled by default because the current build has no administrator
-authentication. See [docs/admin-ml-observatory.md](docs/admin-ml-observatory.md).
+job-state signals. Both the page and its data endpoint require an authenticated administrator.
+See [docs/admin-ml-observatory.md](docs/admin-ml-observatory.md).
 
 That command starts the web process plus a durable embedded worker for convenient local use. The
 upload itself and its processing job are both committed to SQLite before the request returns. Jobs
 use expiring leases, heartbeats, bounded retries, and persisted errors, so a stopped worker can
 recover unfinished work instead of losing an in-memory task.
 
-Run the production-shaped web and ML worker as separate processes:
+Run the local web and ML worker as separate processes:
 
 ```bash
-creatorcut-web --host 0.0.0.0 --worker-mode external
+creatorcut-web --worker-mode external
 creatorcut-worker
 ```
 
-Or build the same two-service topology with shared persistent volumes:
-
-```bash
-docker compose up --build
-```
+The standard-library account server deliberately refuses non-loopback binding so credentials are
+not exposed over plaintext HTTP. The container image defaults to the inference worker. A public web
+deployment requires managed HTTPS, persistent shared storage, and a production identity provider;
+that boundary is documented in [docs/account-security.md](docs/account-security.md).
 
 `/api/health/live` reports web-process liveness. `/api/health/ready` verifies the database and frozen
 serving release and reports persistent queued/running/succeeded/failed job counts. Both processes

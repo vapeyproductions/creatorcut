@@ -1,5 +1,7 @@
 const state = {
-  creatorId: localStorage.getItem("creatorcut_creator_id"),
+  account: null,
+  creatorId: null,
+  csrfToken: null,
   video: null,
   pollTimer: null,
   customPreviewEnd: null,
@@ -17,11 +19,15 @@ const STATUS_COPY = {
 };
 
 const elements = {
+  authSection: document.querySelector("#auth-section"),
+  loginForm: document.querySelector("#login-form"),
+  registerForm: document.querySelector("#register-form"),
+  accountLabel: document.querySelector("#account-label"),
+  logoutButton: document.querySelector("#logout-button"),
   uploadSection: document.querySelector("#upload-section"),
   uploadForm: document.querySelector("#upload-form"),
   uploadButton: document.querySelector("#upload-button"),
   uploadError: document.querySelector("#upload-error"),
-  creatorName: document.querySelector("#creator-name"),
   processingSection: document.querySelector("#processing-section"),
   processingFile: document.querySelector("#processing-file"),
   processingMessage: document.querySelector("#processing-message"),
@@ -69,9 +75,7 @@ const elements = {
   finishReviewMessage: document.querySelector("#finish-review-message"),
 };
 
-const savedName = localStorage.getItem("creatorcut_creator_name");
-if (savedName) elements.creatorName.value = savedName;
-elements.modelReportButton.disabled = !state.creatorId;
+elements.modelReportButton.disabled = true;
 
 function showError(element, message) {
   element.textContent = message;
@@ -79,8 +83,16 @@ function showError(element, message) {
 }
 
 async function request(url, options = {}) {
-  const response = await fetch(url, { cache: "no-store", ...options });
+  const requestOptions = { cache: "no-store", ...options };
+  const method = (requestOptions.method || "GET").toUpperCase();
+  const headers = new Headers(requestOptions.headers || {});
+  if (!["GET", "HEAD", "OPTIONS"].includes(method) && state.csrfToken) {
+    headers.set("X-CSRF-Token", state.csrfToken);
+  }
+  requestOptions.headers = headers;
+  const response = await fetch(url, requestOptions);
   const value = await response.json();
+  if (response.status === 401 && !url.startsWith("/api/auth/")) showSignedOut();
   if (!response.ok) throw new Error(value.error || `Request failed (${response.status}).`);
   return value;
 }
@@ -95,11 +107,86 @@ async function loadConfiguration() {
 }
 
 function setView(name) {
+  elements.authSection.hidden = name !== "auth";
   elements.uploadSection.hidden = name !== "upload";
   elements.processingSection.hidden = name !== "processing";
   elements.resultsSection.hidden = name !== "results";
   elements.modelReportSection.hidden = name !== "model-report";
 }
+
+function showSignedOut() {
+  window.clearTimeout(state.pollTimer);
+  state.account = null;
+  state.creatorId = null;
+  state.csrfToken = null;
+  state.video = null;
+  state.repurposingPacks.clear();
+  elements.accountLabel.hidden = true;
+  elements.logoutButton.hidden = true;
+  elements.adminLink.hidden = true;
+  elements.modelReportButton.disabled = true;
+  setView("auth");
+}
+
+async function activateSession(payload) {
+  state.account = payload.account;
+  state.creatorId = payload.account.creator_id;
+  state.csrfToken = payload.csrf_token;
+  elements.accountLabel.textContent = payload.account.display_name;
+  elements.accountLabel.hidden = false;
+  elements.logoutButton.hidden = false;
+  elements.modelReportButton.disabled = false;
+  setView("upload");
+  await Promise.all([loadConfiguration(), loadRecentVideos()]);
+}
+
+async function submitCredentials(form, endpoint) {
+  const errorElement = form.querySelector(".error");
+  const button = form.querySelector("button[type='submit']");
+  showError(errorElement, "");
+  button.disabled = true;
+  try {
+    const fields = new FormData(form);
+    const payload = Object.fromEntries(fields.entries());
+    const session = await request(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    form.reset();
+    await activateSession(session);
+  } catch (error) {
+    showError(errorElement, error.message || "Account access failed.");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+elements.loginForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  submitCredentials(event.currentTarget, "/api/auth/login");
+});
+
+elements.registerForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  submitCredentials(event.currentTarget, "/api/auth/register");
+});
+
+elements.logoutButton.addEventListener("click", async () => {
+  elements.logoutButton.disabled = true;
+  try {
+    await request("/api/auth/logout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ logout: true }),
+    });
+  } catch (_error) {
+    // The local session is cleared even if it already expired server-side.
+  } finally {
+    elements.logoutButton.disabled = false;
+    showSignedOut();
+  }
+});
 
 elements.uploadForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -108,14 +195,8 @@ elements.uploadForm.addEventListener("submit", async (event) => {
   elements.uploadButton.textContent = "UPLOADING…";
   try {
     const form = new FormData(elements.uploadForm);
-    if (state.creatorId) form.append("creator_id", state.creatorId);
     const payload = await request("/api/uploads", { method: "POST", body: form });
-    state.creatorId = payload.creator.id;
-    elements.modelReportButton.disabled = false;
     state.video = payload.video;
-    localStorage.setItem("creatorcut_creator_id", payload.creator.id);
-    localStorage.setItem("creatorcut_creator_name", payload.creator.display_name);
-    localStorage.setItem("creatorcut_last_video_id", payload.video.id);
     elements.processingFile.textContent = payload.video.original_filename;
     setView("processing");
     updateProcessing(payload.video);
@@ -186,7 +267,6 @@ function renderSourceAnalytics(summary) {
 
 function renderResults(video) {
   setView("results");
-  localStorage.setItem("creatorcut_last_video_id", video.id);
   elements.clips.replaceChildren();
   const customClipCount = video.clips.filter((clip) => clip.origin === "creator").length;
   elements.resultsTitle.textContent = customClipCount
@@ -716,7 +796,6 @@ elements.newVideo.addEventListener("click", () => {
   window.clearTimeout(state.pollTimer);
   state.video = null;
   elements.uploadForm.reset();
-  elements.creatorName.value = localStorage.getItem("creatorcut_creator_name") || "My channel";
   setView("upload");
   loadRecentVideos();
 });
@@ -948,7 +1027,7 @@ async function loadModelReport() {
   setView("model-report");
   try {
     const report = await request(
-      `/api/creators/${encodeURIComponent(state.creatorId)}/model-report`,
+      "/api/account/model-report",
     );
     renderModelReport(report);
   } catch (error) {
@@ -963,7 +1042,7 @@ elements.downloadFeedback.addEventListener("click", async () => {
   elements.downloadFeedback.textContent = "PREPARING SNAPSHOT…";
   try {
     const response = await fetch(
-      `/api/creators/${encodeURIComponent(state.creatorId)}/feedback-export`,
+      "/api/account/feedback-export",
       { cache: "no-store" },
     );
     if (!response.ok) {
@@ -1041,7 +1120,7 @@ async function loadRecentVideos() {
   if (!state.creatorId) return;
   try {
     const payload = await request(
-      `/api/creators/${encodeURIComponent(state.creatorId)}/videos`,
+      "/api/account/videos",
     );
     elements.recentVideos.replaceChildren();
     for (const video of payload.videos) {
@@ -1064,15 +1143,14 @@ async function loadRecentVideos() {
   }
 }
 
-async function loadProductConfiguration() {
+async function loadSession() {
   try {
-    const configuration = await request("/api/config");
-    elements.adminLink.hidden = !configuration.admin_dashboard_enabled;
+    const session = await request("/api/auth/session");
+    if (session.authenticated) await activateSession(session);
+    else showSignedOut();
   } catch (_error) {
-    elements.adminLink.hidden = true;
+    showSignedOut();
   }
 }
 
-loadProductConfiguration();
-loadRecentVideos();
-loadConfiguration();
+loadSession();

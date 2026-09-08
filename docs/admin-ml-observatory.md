@@ -7,6 +7,11 @@ must be started explicitly:
 creatorcut-web --enable-admin-dashboard
 ```
 
+The first account registered against a new local database in this mode becomes the administrator.
+On an existing database, register normally and run
+`creatorcut-account promote-admin --email creator@example.com`. Both the dashboard document and
+report endpoint verify the server-side session and administrator role.
+
 The observatory is designed to answer two different questions without conflating them.
 
 ## 1. Does the frozen model generalize?
@@ -35,6 +40,9 @@ The live sections aggregate operational evidence across creator profiles:
 - persistent processing-job states and retry counts;
 - a per-account coverage table.
 
+Authenticated-account and legacy-profile counts are reported separately. Each credentialed row
+shows its email and role so the operator can audit which creator owns the associated evidence.
+
 Selection rate is labeled as a product-choice signal, not accuracy. Rank position affects clicks,
 an unselected result is not necessarily bad, and audience performance is confounded by packaging,
 publication time, audience, and distribution. The dashboard therefore emphasizes denominators and
@@ -43,7 +51,7 @@ coverage instead of converting these signals into an unsupported success score.
 ## Privacy and access boundary
 
 The report omits transcript text, local media paths, and raw analytics rows. It retains local
-profile names because the purpose is account-level operations. The dashboard has no application
-authentication in the current single-user build, so its routes are unavailable unless the explicit
-local admin flag is set. CreatorCut also refuses to combine that flag with a non-loopback host. A
-public deployment must add authenticated administrator authorization before enabling it.
+profile names and account emails because the purpose is account-level operations. The dashboard is
+unavailable unless the explicit local admin flag is set, and every request requires an
+administrator session. The current credentialed web process refuses non-loopback binding; a public
+deployment must replace this local boundary with managed HTTPS and production identity controls.

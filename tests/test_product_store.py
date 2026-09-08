@@ -160,6 +160,8 @@ def test_admin_observatory_aggregates_accounts_media_edits_and_analytics(tmp_pat
 
     assert report["scope"] == {
         "creator_account_count": 1,
+        "authenticated_account_count": 0,
+        "legacy_profile_count": 1,
         "source_video_count": 1,
         "clip_count": 3,
     }
@@ -185,7 +187,65 @@ def test_admin_observatory_aggregates_accounts_media_edits_and_analytics(tmp_pat
     }
     assert report["analytics"]["retention_points_per_import"]["median"] == 2.0
     assert report["accounts"][0]["creator_id"] == creator["id"]
+    assert report["accounts"][0]["account_status"] == "legacy_local_profile"
     assert "transcript_text" not in json.dumps(report)
+
+
+def test_store_authenticates_accounts_and_revokes_opaque_sessions(tmp_path):
+    store = ProductStore(tmp_path / "creatorcut.sqlite")
+    account = store.register_account(
+        "Example channel", "Creator@Example.com", "a long private password", is_admin=True
+    )
+
+    assert account == {
+        "creator_id": account["creator_id"],
+        "display_name": "Example channel",
+        "email": "creator@example.com",
+        "is_admin": True,
+    }
+    assert store.authenticate_account("creator@example.com", "wrong password") is None
+    authenticated = store.authenticate_account(
+        "CREATOR@example.com", "a long private password"
+    )
+    assert authenticated == account
+    session = store.create_auth_session(account["creator_id"])
+    resolved = store.account_for_session(session["token"])
+    assert resolved["creator_id"] == account["creator_id"]
+    assert resolved["csrf_token"] == session["csrf_token"]
+    store.delete_auth_session(session["token"])
+    assert store.account_for_session(session["token"]) is None
+
+
+def test_only_first_local_account_receives_bootstrap_admin_role(tmp_path):
+    store = ProductStore(tmp_path / "creatorcut.sqlite")
+
+    first = store.register_account(
+        "First", "first@example.com", "first account password", admin_if_first=True
+    )
+    second = store.register_account(
+        "Second", "second@example.com", "second account password", admin_if_first=True
+    )
+
+    assert first["is_admin"] is True
+    assert second["is_admin"] is False
+    report = store.admin_ml_report()
+    assert report["scope"]["authenticated_account_count"] == 2
+    assert report["scope"]["legacy_profile_count"] == 0
+
+
+def test_export_downloads_are_short_lived_and_owner_bound(tmp_path):
+    store, creator, _, clips = populated_store(tmp_path)
+    other = store.ensure_creator("Other", "creator_other")
+    export_path = tmp_path / "private-export.mp4"
+    export_path.touch()
+
+    download = store.create_export_download(creator["id"], clips[0]["id"], export_path)
+
+    assert store.export_download_for_account(download["token"], creator["id"])[
+        "path"
+    ] == export_path
+    with pytest.raises(KeyError):
+        store.export_download_for_account(download["token"], other["id"])
 
 
 def test_store_can_backfill_a_legacy_clip_embedding(tmp_path):
