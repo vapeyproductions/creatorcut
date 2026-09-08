@@ -477,10 +477,17 @@ class ProductProcessor:
             )
             predictions = score_frozen_model(queue, embedding_artifact, frozen_model)["records"]
             candidate_by_id = {candidate["candidate_id"]: candidate for candidate in candidates}
+            embedding_by_candidate_id = {
+                record["candidate_id"]: embeddings[index].astype(float).tolist()
+                for index, record in enumerate(queue)
+            }
             scored = [
                 {
                     **candidate_by_id[prediction["candidate_id"]],
                     "transcript_text": candidate_by_id[prediction["candidate_id"]]["text"],
+                    "semantic_embedding": embedding_by_candidate_id[
+                        prediction["candidate_id"]
+                    ],
                     "global_score": prediction["predicted_quality_score"],
                     "predicted_targets": prediction["predicted_targets"],
                 }

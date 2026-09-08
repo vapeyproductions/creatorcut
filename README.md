@@ -12,7 +12,8 @@ Rather than treating clip selection as an opaque generative-AI task, CreatorCut 
 4. Rank candidates using an explainable ML model.
 5. Preview and adjust the three recommended intervals.
 6. Export the source aspect ratio, a vertical 9:16 crop, or a vertical clip with burned captions.
-7. Capture editorial decisions and optional YouTube analytics for bounded personalization.
+7. Capture editorial decisions and optional YouTube analytics for bounded feature and semantic
+   personalization.
 
 ## ML system
 
@@ -62,7 +63,9 @@ creates frame-accurate MP4 downloads. A creator may adjust either boundary by up
 choose source-ratio or 9:16 captioned export, or reject a recommendation. The SQLite store records
 which clips were shown, downloaded, edited, or rejected while keeping post-publication outcomes in
 a separate table. YouTube Studio ZIP/CSV exports can be attached to the source video or a published
-Short; insufficient reports are saved without influencing ranking. See
+Short; insufficient reports are saved without influencing ranking. After enough comparable Shorts,
+the product learns both interpretable quality preferences and similarity to semantically related
+high-performing clips, while displaying recurring positive words and phrases. See
 [docs/personalization-and-feedback.md](docs/personalization-and-feedback.md) and
 [docs/youtube-analytics-feedback.md](docs/youtube-analytics-feedback.md).
 

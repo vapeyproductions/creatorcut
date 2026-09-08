@@ -4,13 +4,22 @@ from creatorcut.product_store import ProductStore
 
 
 def ranked_clip(rank, hook, start):
+    semantic_embedding = [(5.0 - hook) / 4.0, (hook - 1.0) / 4.0]
+    topic = (
+        "pricing strategy"
+        if hook >= 4
+        else "general introduction"
+        if hook <= 2
+        else "practical advice"
+    )
     return {
         "id": f"video_clip_{rank}",
         "rank": rank,
         "start_seconds": start,
         "end_seconds": start + 30.0,
         "duration_seconds": 30.0,
-        "transcript_text": "A candidate clip.",
+        "transcript_text": f"A complete {topic} example.",
+        "semantic_embedding": semantic_embedding,
         "global_score": 3.5,
         "personalized_score": 3.5,
         "predicted_targets": {
@@ -58,6 +67,9 @@ def test_store_persists_upload_clips_and_presentations(tmp_path):
         "performance_personalization_active": False,
         "performance_eligible_clip_count": 0,
         "performance_minimum_clip_count": 5,
+        "semantic_performance_active": False,
+        "semantic_performance_example_count": 0,
+        "positive_semantic_trends": [],
     }
     assert [item["id"] for item in store.list_videos(creator["id"])] == [video["id"]]
 
@@ -73,6 +85,7 @@ def test_editorial_feedback_activates_bounded_personalization(tmp_path):
             "candidate_id": "high_hook",
             "duration_seconds": 30.0,
             "global_score": 3.5,
+            "semantic_embedding": [0.0, 1.0],
             "predicted_targets": {
                 "hook": 5.0,
                 "completeness": 4.0,
@@ -84,6 +97,7 @@ def test_editorial_feedback_activates_bounded_personalization(tmp_path):
             "candidate_id": "low_hook",
             "duration_seconds": 30.0,
             "global_score": 3.5,
+            "semantic_embedding": [1.0, 0.0],
             "predicted_targets": {
                 "hook": 1.0,
                 "completeness": 4.0,
@@ -277,6 +291,7 @@ def test_performance_layer_learns_only_after_five_comparable_shorts(tmp_path):
             "candidate_id": "high_hook",
             "duration_seconds": 30.0,
             "global_score": 3.5,
+            "semantic_embedding": [0.0, 1.0],
             "predicted_targets": {
                 "hook": 5.0,
                 "completeness": 4.0,
@@ -288,6 +303,7 @@ def test_performance_layer_learns_only_after_five_comparable_shorts(tmp_path):
             "candidate_id": "low_hook",
             "duration_seconds": 30.0,
             "global_score": 3.5,
+            "semantic_embedding": [1.0, 0.0],
             "predicted_targets": {
                 "hook": 1.0,
                 "completeness": 4.0,
@@ -300,9 +316,27 @@ def test_performance_layer_learns_only_after_five_comparable_shorts(tmp_path):
     personalized, metadata = store.personalize_candidates(creator["id"], candidates)
 
     assert metadata["performance"]["active"] is True
+    assert metadata["performance"]["semantic_active"] is True
     assert personalized[0]["performance_adjustment"] > personalized[1][
         "performance_adjustment"
     ]
+    assert personalized[0]["semantic_performance_adjustment"] > personalized[1][
+        "semantic_performance_adjustment"
+    ]
+    assert all(
+        abs(
+            item["performance_adjustment"]
+            + item["semantic_performance_adjustment"]
+        )
+        <= 0.25
+        for item in personalized
+    )
+    summary = store.creator_summary(creator["id"])
+    assert summary["semantic_performance_active"] is True
+    assert any(
+        trend["term"] == "pricing strategy"
+        for trend in summary["positive_semantic_trends"]
+    )
 
 
 def test_store_rejects_unknown_editorial_event(tmp_path):

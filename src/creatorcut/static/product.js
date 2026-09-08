@@ -27,6 +27,7 @@ const elements = {
   resultsSection: document.querySelector("#results-section"),
   clips: document.querySelector("#clips"),
   personalizationStatus: document.querySelector("#personalization-status"),
+  semanticTrends: document.querySelector("#semantic-trends"),
   newVideo: document.querySelector("#new-video-button"),
   clipTemplate: document.querySelector("#clip-template"),
   recentSection: document.querySelector("#recent-section"),
@@ -150,7 +151,11 @@ function renderResults(video) {
   const outcomes = summary.performance_personalization_active
     ? `Audience performance: active from ${summary.performance_eligible_clip_count} comparable Shorts.`
     : `Audience performance: ${summary.performance_eligible_clip_count}/${summary.performance_minimum_clip_count} comparable Shorts eligible.`;
-  elements.personalizationStatus.textContent = `${editorial}\n${outcomes}`;
+  const semantics = summary.semantic_performance_active
+    ? `Semantic performance: active from ${summary.semantic_performance_example_count} transcript embeddings.`
+    : `Semantic performance: ${summary.semantic_performance_example_count}/${summary.performance_minimum_clip_count} eligible clips have embeddings.`;
+  elements.personalizationStatus.textContent = `${editorial}\n${outcomes}\n${semantics}`;
+  renderSemanticTrends(summary);
   renderSourceAnalytics(video.source_analytics);
 
   for (const clip of video.clips) {
@@ -173,6 +178,9 @@ function renderResults(video) {
     );
     article.querySelector(".performance-adjustment").textContent = formatAdjustment(
       clip.performance_adjustment,
+    );
+    article.querySelector(".semantic-adjustment").textContent = formatAdjustment(
+      clip.semantic_performance_adjustment,
     );
     article.querySelector(".retention-adjustment").textContent = formatAdjustment(
       clip.source_retention_adjustment,
@@ -234,6 +242,37 @@ function renderResults(video) {
     );
     elements.clips.append(fragment);
   }
+}
+
+function renderSemanticTrends(summary) {
+  elements.semanticTrends.replaceChildren();
+  const heading = document.createElement("h3");
+  heading.textContent = "RECURRING SEMANTIC TRENDS";
+  elements.semanticTrends.append(heading);
+  if (!summary.semantic_performance_active) {
+    const copy = document.createElement("p");
+    copy.textContent =
+      "Trends appear after five sufficiently viewed Shorts have both outcomes and saved transcript embeddings.";
+    elements.semanticTrends.append(copy);
+    return;
+  }
+  const trends = summary.positive_semantic_trends || [];
+  if (!trends.length) {
+    const copy = document.createElement("p");
+    copy.textContent =
+      "Semantic matching is active, but no recurring word or phrase has a stable positive association yet.";
+    elements.semanticTrends.append(copy);
+    return;
+  }
+  const copy = document.createElement("p");
+  copy.textContent = "Words and phrases recurring in this creator's stronger Shorts:";
+  const list = document.createElement("ul");
+  for (const trend of trends) {
+    const item = document.createElement("li");
+    item.textContent = `${trend.term} (${trend.support} clips)`;
+    list.append(item);
+  }
+  elements.semanticTrends.append(copy, list);
 }
 
 async function downloadClip(article, clip, button) {

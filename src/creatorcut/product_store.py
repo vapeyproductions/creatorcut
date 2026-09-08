@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sqlite3
 import threading
 import uuid
@@ -23,6 +24,8 @@ PERSONALIZATION_PRIOR_STRENGTH = 8.0
 MAXIMUM_PERSONALIZATION_ADJUSTMENT = 0.35
 PERFORMANCE_PRIOR_STRENGTH = 12.0
 MAXIMUM_PERFORMANCE_ADJUSTMENT = 0.25
+MAXIMUM_STRUCTURED_PERFORMANCE_ADJUSTMENT = 0.15
+MAXIMUM_SEMANTIC_PERFORMANCE_ADJUSTMENT = 0.15
 MINIMUM_PERFORMANCE_EXAMPLES = 5
 MINIMUM_PERFORMANCE_VIEWS = 50
 MAXIMUM_SOURCE_RETENTION_ADJUSTMENT = 0.20
@@ -30,6 +33,58 @@ MINIMUM_SOURCE_RETENTION_POINTS = 10
 MINIMUM_SOURCE_RETENTION_VIEWS = 100
 
 PREFERENCE_FEATURE_NAMES = ("hook", "completeness", "payoff", "clarity", "duration")
+SEMANTIC_TREND_STOPWORDS = {
+    "about",
+    "after",
+    "again",
+    "also",
+    "and",
+    "are",
+    "because",
+    "been",
+    "before",
+    "being",
+    "but",
+    "can",
+    "could",
+    "did",
+    "does",
+    "doing",
+    "for",
+    "from",
+    "had",
+    "has",
+    "have",
+    "here",
+    "how",
+    "into",
+    "its",
+    "just",
+    "like",
+    "more",
+    "not",
+    "now",
+    "really",
+    "that",
+    "the",
+    "their",
+    "then",
+    "there",
+    "they",
+    "this",
+    "was",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "will",
+    "with",
+    "would",
+    "you",
+    "your",
+}
 
 
 def utc_now() -> str:
@@ -175,7 +230,9 @@ class ProductStore:
                 "ranking_model_version": "TEXT",
                 "editorial_adjustment": "REAL NOT NULL DEFAULT 0",
                 "performance_adjustment": "REAL NOT NULL DEFAULT 0",
+                "semantic_performance_adjustment": "REAL NOT NULL DEFAULT 0",
                 "source_retention_adjustment": "REAL NOT NULL DEFAULT 0",
+                "semantic_embedding_json": "TEXT",
             },
             "performance_reports": {
                 "engaged_views": "INTEGER",
@@ -273,8 +330,9 @@ class ProductStore:
                         predicted_targets_json, explanation, global_rank,
                         ranking_model_version,
                         editorial_adjustment, performance_adjustment,
-                        source_retention_adjustment, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        semantic_performance_adjustment, source_retention_adjustment,
+                        semantic_embedding_json, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         clip["id"],
@@ -292,7 +350,11 @@ class ProductStore:
                         clip.get("ranking_model_version"),
                         clip.get("editorial_adjustment", 0.0),
                         clip.get("performance_adjustment", 0.0),
+                        clip.get("semantic_performance_adjustment", 0.0),
                         clip.get("source_retention_adjustment", 0.0),
+                        json.dumps(clip.get("semantic_embedding"))
+                        if clip.get("semantic_embedding") is not None
+                        else None,
                         utc_now(),
                     ),
                 )
@@ -634,9 +696,97 @@ class ProductStore:
             ) / exposure
         return components
 
+    @staticmethod
+    def _semantic_vector(value: str | None) -> list[float] | None:
+        if not value:
+            return None
+        try:
+            vector = [float(item) for item in json.loads(value)]
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        if not vector or not all(math.isfinite(item) for item in vector):
+            return None
+        norm = math.sqrt(sum(item * item for item in vector))
+        if norm <= 0:
+            return None
+        return [item / norm for item in vector]
+
+    @staticmethod
+    def _semantic_terms(text: str) -> set[str]:
+        tokens = [
+            token
+            for token in re.findall(r"[a-z0-9][a-z0-9'-]{2,}", text.casefold())
+            if token not in SEMANTIC_TREND_STOPWORDS
+        ]
+        terms = set(tokens)
+        terms.update(
+            f"{left} {right}" for left, right in zip(tokens, tokens[1:], strict=False)
+        )
+        return terms
+
+    @classmethod
+    def _positive_semantic_trends(
+        cls, examples: list[dict[str, Any]], targets: dict[str, float]
+    ) -> list[dict[str, Any]]:
+        scores: dict[str, float] = {}
+        support: dict[str, int] = {}
+        for row in examples:
+            outcome = targets.get(row["clip_id"])
+            if outcome is None:
+                continue
+            for term in cls._semantic_terms(str(row.get("transcript_text", ""))):
+                scores[term] = scores.get(term, 0.0) + outcome
+                support[term] = support.get(term, 0) + 1
+        ranked = sorted(
+            (
+                (term, score, support[term])
+                for term, score in scores.items()
+                if support[term] >= 2 and score > 0
+            ),
+            key=lambda item: (-item[1], -item[2], item[0]),
+        )
+        return [
+            {"term": term, "support": count, "association": round(score, 3)}
+            for term, score, count in ranked[:6]
+        ]
+
+    @staticmethod
+    def _semantic_outcome_adjustment(
+        candidate_embedding: list[float] | None,
+        examples: list[tuple[list[float], float]],
+        shrinkage: float,
+    ) -> float:
+        if candidate_embedding is None or not examples or shrinkage <= 0:
+            return 0.0
+        norm = math.sqrt(sum(item * item for item in candidate_embedding))
+        if norm <= 0 or not math.isfinite(norm):
+            return 0.0
+        normalized = [item / norm for item in candidate_embedding]
+        if any(len(vector) != len(normalized) for vector, _ in examples):
+            return 0.0
+        similarities = [
+            sum(left * right for left, right in zip(normalized, vector, strict=True))
+            for vector, _ in examples
+        ]
+        maximum = max(similarities)
+        weights = [math.exp((similarity - maximum) / 0.12) for similarity in similarities]
+        predicted_outcome = sum(
+            weight * outcome
+            for weight, (_, outcome) in zip(weights, examples, strict=True)
+        ) / sum(weights)
+        return max(
+            -MAXIMUM_SEMANTIC_PERFORMANCE_ADJUSTMENT,
+            min(
+                MAXIMUM_SEMANTIC_PERFORMANCE_ADJUSTMENT,
+                MAXIMUM_SEMANTIC_PERFORMANCE_ADJUSTMENT
+                * shrinkage
+                * predicted_outcome,
+            ),
+        )
+
     def _performance_preference_profile(
         self, creator_id: str
-    ) -> tuple[list[float], dict[str, Any]]:
+    ) -> tuple[list[float], list[tuple[list[float], float]], dict[str, Any]]:
         with self._connect() as connection:
             rows = connection.execute(
                 """
@@ -651,7 +801,8 @@ class ProductStore:
                            ),
                            clips.duration_seconds
                        ) AS duration_seconds,
-                       clips.predicted_targets_json
+                       clips.predicted_targets_json, clips.transcript_text,
+                       clips.semantic_embedding_json
                 FROM performance_reports
                 JOIN clips ON clips.id = performance_reports.clip_id
                 WHERE performance_reports.creator_id = ?
@@ -704,13 +855,30 @@ class ProductStore:
                     for weight, feature in zip(weights, features, strict=True)
                 ]
             weights = [shrinkage * weight / len(eligible) for weight in weights]
-        return weights, {
+        semantic_examples = []
+        if active:
+            for row in eligible:
+                vector = self._semantic_vector(row.get("semantic_embedding_json"))
+                if vector is not None:
+                    semantic_examples.append((vector, targets[row["clip_id"]]))
+        semantic_example_count = len(semantic_examples)
+        semantic_active = semantic_example_count >= MINIMUM_PERFORMANCE_EXAMPLES
+        if not semantic_active:
+            semantic_examples = []
+        return weights, semantic_examples, {
             "active": active,
             "eligible_clip_count": len(eligible),
             "minimum_clip_count": MINIMUM_PERFORMANCE_EXAMPLES,
             "minimum_views": MINIMUM_PERFORMANCE_VIEWS,
             "shrinkage": shrinkage,
             "feature_weights": dict(zip(PREFERENCE_FEATURE_NAMES, weights, strict=True)),
+            "semantic_active": semantic_active,
+            "semantic_example_count": semantic_example_count,
+            "positive_semantic_trends": self._positive_semantic_trends(
+                eligible, targets
+            )
+            if semantic_active
+            else [],
         }
 
     def personalize_candidates(
@@ -757,9 +925,11 @@ class ProductStore:
         else:
             weights = [0.0] * len(weights)
 
-        performance_weights, performance_metadata = self._performance_preference_profile(
-            creator_id
-        )
+        (
+            performance_weights,
+            semantic_examples,
+            performance_metadata,
+        ) = self._performance_preference_profile(creator_id)
         personalized: list[dict[str, Any]] = []
         for candidate in candidates:
             features = preference_features(candidate)
@@ -775,19 +945,34 @@ class ProductStore:
                 for weight, feature in zip(performance_weights, features, strict=True)
             ) / len(features)
             performance_adjustment = max(
-                -MAXIMUM_PERFORMANCE_ADJUSTMENT,
-                min(MAXIMUM_PERFORMANCE_ADJUSTMENT, raw_performance_adjustment),
+                -MAXIMUM_STRUCTURED_PERFORMANCE_ADJUSTMENT,
+                min(
+                    MAXIMUM_STRUCTURED_PERFORMANCE_ADJUSTMENT,
+                    raw_performance_adjustment,
+                ),
             )
+            semantic_performance_adjustment = self._semantic_outcome_adjustment(
+                candidate.get("semantic_embedding"),
+                semantic_examples,
+                performance_metadata["shrinkage"],
+            )
+            combined_performance = performance_adjustment + semantic_performance_adjustment
+            if abs(combined_performance) > MAXIMUM_PERFORMANCE_ADJUSTMENT:
+                scale = MAXIMUM_PERFORMANCE_ADJUSTMENT / abs(combined_performance)
+                performance_adjustment *= scale
+                semantic_performance_adjustment *= scale
             personalized.append(
                 {
                     **candidate,
                     "editorial_adjustment": editorial_adjustment,
                     "performance_adjustment": performance_adjustment,
+                    "semantic_performance_adjustment": semantic_performance_adjustment,
                     "source_retention_adjustment": 0.0,
                     "personalized_score": (
                         float(candidate["global_score"])
                         + editorial_adjustment
                         + performance_adjustment
+                        + semantic_performance_adjustment
                     ),
                 }
             )
@@ -895,7 +1080,7 @@ class ProductStore:
             analytics_count = connection.execute(
                 "SELECT COUNT(*) FROM analytics_imports WHERE creator_id = ?", (creator_id,)
             ).fetchone()[0]
-        _, performance = self._performance_preference_profile(creator_id)
+        _, _, performance = self._performance_preference_profile(creator_id)
         return {
             "decision_count": decision_count,
             "performance_report_count": performance_count,
@@ -904,9 +1089,13 @@ class ProductStore:
             "performance_personalization_active": performance["active"],
             "performance_eligible_clip_count": performance["eligible_clip_count"],
             "performance_minimum_clip_count": performance["minimum_clip_count"],
+            "semantic_performance_active": performance["semantic_active"],
+            "semantic_performance_example_count": performance["semantic_example_count"],
+            "positive_semantic_trends": performance["positive_semantic_trends"],
         }
 
     @staticmethod
     def _public_clip(clip: dict[str, Any]) -> dict[str, Any]:
         clip["predicted_targets"] = json.loads(clip.pop("predicted_targets_json"))
+        clip.pop("semantic_embedding_json", None)
         return clip

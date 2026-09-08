@@ -57,8 +57,14 @@ conditions. They must not be poured directly into the quality target.
 The current YouTube performance layer uses engaged views as the preferred denominator, then
 within-creator percentiles for stayed-to-watch, average viewed percentage, relative view duration,
 engagement rates, and subscriber conversion. It activates only after five distinct clips have at
-least 50 views or engaged views and a useful outcome metric. The learned preference contribution is
-shrinkage-weighted and capped at 0.25 rating points.
+least 50 views or engaged views and a useful outcome metric.
+
+Performance adaptation has two components. An interpretable feature component learns associations
+with hook, completeness, payoff, clarity, and duration. A semantic nearest-neighbor component uses
+the same frozen transcript embeddings as the global ranker to transfer the outcomes of similar
+published clips to a new candidate. Repeated words and two-word phrases from stronger clips are
+displayed as trend evidence, but exact word overlap is not required for scoring. The two components
+are shrinkage-weighted and jointly capped at 0.25 rating points.
 
 An optional source-video analytics import is handled separately. If a timestamped long-form
 audience-retention curve has at least ten points and 100 source views, it can add a within-video

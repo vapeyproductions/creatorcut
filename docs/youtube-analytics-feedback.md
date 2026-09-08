@@ -70,14 +70,24 @@ and [retention dimensions](https://developers.google.com/youtube/analytics/dimen
 ## Creator outcome personalization
 
 Each published clip report is joined back to the exact shown clip, its frozen model outputs, its
-duration, and the final timestamps the creator exported. Metrics are converted to within-creator
-percentiles before fitting a small interpretable preference vector. This avoids comparing a small
-channel's raw totals with a large channel's totals.
+transcript embedding, and the final timestamps the creator exported. Metrics are converted to
+within-creator percentiles before fitting two complementary preference components. This avoids
+comparing a small channel's raw totals with a large channel's totals.
+
+- The structured component learns whether hook, completeness, payoff, clarity, or duration are
+  associated with stronger outcomes.
+- The semantic component compares a new candidate's frozen transcript embedding with previously
+  published clips and transfers the outcomes of the most semantically similar examples. This can
+  capture recurring subject matter and phrasing even when the exact words differ.
+
+For transparency, recurring unigrams and two-word phrases with positive outcome associations are
+shown in the interface. These terms explain the observed history; candidate scoring itself uses the
+full semantic embedding rather than exact keyword matching.
 
 The performance layer requires at least five distinct Shorts, at least 50 views or engaged views
-per Short, at least one useful outcome metric, and non-constant outcomes. Its weights shrink toward
-zero with small samples and its contribution is capped at ±0.25 rating points. The current layer is
-an adaptive product feature, not a validated portfolio accuracy claim.
+per Short, at least one useful outcome metric, and non-constant outcomes. Both components shrink
+toward zero with small samples, and their combined contribution is capped at ±0.25 rating points.
+The current layer is an adaptive product feature, not a validated portfolio accuracy claim.
 
 Traffic source, country, device, demographics, and publication context are preserved in the parsed
 report for future cohort analysis. They do not directly boost a clip because they are strong
@@ -105,4 +115,3 @@ it never silently rewrites recommendations already shown.
   videos and creators.
 - A future production experiment should add a small randomized exploration bucket and log selection
   propensity before estimating causal performance effects.
-
