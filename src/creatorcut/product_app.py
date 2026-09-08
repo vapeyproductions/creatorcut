@@ -21,6 +21,7 @@ from urllib.parse import unquote, urlparse
 
 from creatorcut.analytics import MAXIMUM_ANALYTICS_BYTES, parse_analytics_export
 from creatorcut.annotation_app import parse_byte_range
+from creatorcut.backtest import MAXIMUM_BACKTEST_SHORTS, parse_backtest_tracker
 from creatorcut.feedback_export import build_feedback_snapshot
 from creatorcut.platforms import SUPPORTED_PLATFORMS, validate_clip_plan
 from creatorcut.product_pipeline import ProductProcessor, validate_export_interval
@@ -149,6 +150,7 @@ class ProductApplication:
         source_analytics_filename: str | None = None,
         source_analytics_report: dict[str, Any] | None = None,
         clip_plan: dict[str, Any] | None = None,
+        enqueue_processing: bool = True,
     ) -> dict[str, Any]:
         """Stream an uploaded file to private local storage and queue inference."""
         suffix = Path(original_filename).suffix.lower()
@@ -163,7 +165,11 @@ class ProductApplication:
             raise ValueError("The uploaded video is empty")
         creator_id = creator["creator_id"]
         video = self.store.create_video(
-            creator_id, Path(original_filename).name, upload_path, clip_plan
+            creator_id,
+            Path(original_filename).name,
+            upload_path,
+            clip_plan,
+            enqueue_processing=enqueue_processing,
         )
         if source_analytics_filename and source_analytics_report:
             self.store.save_analytics_import(
@@ -174,14 +180,158 @@ class ProductApplication:
                 video_id=video["id"],
             )
             video = self.store.get_video(video["id"])
+        if enqueue_processing:
+            log_event(
+                LOGGER,
+                "video_upload_queued",
+                video_id=video["id"],
+                creator_id=creator_id,
+                original_filename=video["original_filename"],
+            )
+        return {"video": video}
+
+    def accept_backtest_source(
+        self,
+        account: dict[str, Any],
+        experiment_id: str,
+        source_key: str,
+        role: str,
+        video_field: Any,
+        short_fields: list[Any],
+    ) -> dict[str, Any]:
+        """Validate and queue one reference or holdout long video with its Short files."""
+        experiment = self.store.get_backtest_experiment(
+            experiment_id, account["creator_id"]
+        )
+        if role not in {"reference", "holdout"}:
+            raise ValueError("Choose a reference or test-video role")
+        if Path(video_field.filename).stem != source_key:
+            raise ValueError(
+                f"Choose {source_key}.mp4 as the long video for this step"
+            )
+        expected = {
+            row["content_id"]
+            for row in (
+                experiment["reference_clips"]
+                if role == "reference"
+                else experiment["holdout"]["actual_clips"]
+            )
+            if row["source_key"] == source_key
+        }
+        received_list = [Path(field.filename).stem for field in short_fields if field.filename]
+        received = set(received_list)
+        if role == "reference" and (
+            received != expected or len(received_list) != len(received)
+        ):
+            missing = sorted(expected - received)
+            extra = sorted(received - expected)
+            details = []
+            if missing:
+                details.append("missing " + ", ".join(missing))
+            if extra:
+                details.append("not in tracker " + ", ".join(extra))
+            if len(received_list) != len(received):
+                details.append("duplicate filenames")
+            raise ValueError("Short filenames must match the tracker: " + "; ".join(details))
+        if role == "holdout" and short_fields:
+            raise ValueError(
+                "Upload only test_vid now. Its published Shorts stay hidden until "
+                "recommendations freeze."
+            )
+        requested_count = (
+            experiment["holdout"]["expected_clip_count"] if role == "holdout" else 1
+        )
+        result = self.accept_upload(
+            account,
+            video_field.filename,
+            video_field.file,
+            clip_plan=validate_clip_plan({"youtube": min(8, requested_count)}),
+            enqueue_processing=False,
+        )
+        video_id = result["video"]["id"]
+        self.store.attach_backtest_source(
+            experiment_id, account["creator_id"], source_key, role, video_id
+        )
+        target_dir = self.upload_dir / "backtests" / experiment_id
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for field in short_fields:
+            suffix = Path(field.filename).suffix.casefold()
+            if suffix not in ALLOWED_VIDEO_SUFFIXES:
+                raise ValueError("Historical Shorts must be MP4, MOV, M4V, or WebM files")
+            path = target_dir / f"{uuid.uuid4().hex}{suffix}"
+            with path.open("wb") as output:
+                shutil.copyfileobj(field.file, output, length=1024 * 1024)
+            if path.stat().st_size == 0:
+                path.unlink()
+                raise ValueError(f"{field.filename} is empty")
+            self.store.save_backtest_short_upload(
+                experiment_id,
+                account["creator_id"],
+                source_key,
+                field.filename,
+                path,
+            )
+        result["video"] = self.store.enqueue_video(video_id)
         log_event(
             LOGGER,
-            "video_upload_queued",
-            video_id=video["id"],
-            creator_id=creator_id,
-            original_filename=video["original_filename"],
+            "backtest_video_upload_queued",
+            video_id=video_id,
+            creator_id=account["creator_id"],
+            experiment_id=experiment_id,
+            source_key=source_key,
+            role=role,
         )
-        return {"video": video}
+        return self.store.get_backtest_experiment(
+            experiment_id, account["creator_id"]
+        )
+
+    def accept_backtest_holdout_clips(
+        self,
+        account: dict[str, Any],
+        experiment_id: str,
+        short_fields: list[Any],
+    ) -> dict[str, Any]:
+        """Reveal holdout Shorts only after the recommendation snapshot exists."""
+        experiment = self.store.get_backtest_experiment(
+            experiment_id, account["creator_id"]
+        )
+        if not experiment["can_upload_holdout_clips"]:
+            raise ValueError("Generate and freeze test-video recommendations first")
+        expected_rows = experiment["holdout"]["actual_clips"]
+        expected = {row["content_id"] for row in expected_rows}
+        received_list = [Path(field.filename).stem for field in short_fields if field.filename]
+        received = set(received_list)
+        if received != expected or len(received_list) != len(received):
+            missing = sorted(expected - received)
+            extra = sorted(received - expected)
+            details = []
+            if missing:
+                details.append("missing " + ", ".join(missing))
+            if extra:
+                details.append("not in tracker " + ", ".join(extra))
+            if len(received_list) != len(received):
+                details.append("duplicate filenames")
+            raise ValueError("Test Short filenames must match the tracker: " + "; ".join(details))
+        target_dir = self.upload_dir / "backtests" / experiment_id
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for field in short_fields:
+            suffix = Path(field.filename).suffix.casefold()
+            if suffix not in ALLOWED_VIDEO_SUFFIXES:
+                raise ValueError("Test Shorts must be MP4, MOV, M4V, or WebM files")
+            path = target_dir / f"{uuid.uuid4().hex}{suffix}"
+            with path.open("wb") as output:
+                shutil.copyfileobj(field.file, output, length=1024 * 1024)
+            if path.stat().st_size == 0:
+                path.unlink()
+                raise ValueError(f"{field.filename} is empty")
+            self.store.save_backtest_short_upload(
+                experiment_id,
+                account["creator_id"],
+                experiment["holdout_key"],
+                field.filename,
+                path,
+            )
+        return self.processor.evaluate_backtest_holdout(experiment_id)
 
     def health(self) -> dict[str, Any]:
         """Return serving readiness plus persistent queue counters."""
@@ -343,6 +493,15 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
             if path == "/assets/product.js":
                 self._send_file(STATIC_DIRECTORY / "product.js")
                 return
+            if path == "/backtest":
+                self._send_file(STATIC_DIRECTORY / "backtest.html")
+                return
+            if path == "/assets/backtest.css":
+                self._send_file(STATIC_DIRECTORY / "backtest.css")
+                return
+            if path == "/assets/backtest.js":
+                self._send_file(STATIC_DIRECTORY / "backtest.js")
+                return
             if path == "/api/config":
                 account = self._current_account()
                 self._send_json(
@@ -429,6 +588,29 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                     {"videos": application.store.list_videos(account["creator_id"])}
                 )
                 return
+            if path == "/api/account/backtests":
+                self._send_json(
+                    {
+                        "experiments": application.store.list_backtest_experiments(
+                            account["creator_id"]
+                        )
+                    }
+                )
+                return
+            if path.startswith("/api/backtests/"):
+                experiment_id = unquote(path[len("/api/backtests/") :]).strip("/")
+                if "/" not in experiment_id:
+                    try:
+                        experiment = application.store.get_backtest_experiment(
+                            experiment_id, account["creator_id"]
+                        )
+                        experiment.pop("serving_release", None)
+                        self._send_json({"experiment": experiment})
+                    except KeyError:
+                        self._send_json(
+                            {"error": "Historical test not found"}, HTTPStatus.NOT_FOUND
+                        )
+                    return
             if path == "/api/account/contribution-settings":
                 self._send_json(
                     application.store.contribution_settings(account["creator_id"])
@@ -492,6 +674,32 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                     return
                 if path == "/api/uploads":
                     self._handle_upload(account)
+                    return
+                if path == "/api/backtests":
+                    self._handle_backtest_create(account)
+                    return
+                if path.startswith("/api/backtests/") and path.endswith("/sources"):
+                    experiment_id = unquote(
+                        path[len("/api/backtests/") : -len("/sources")]
+                    ).strip("/")
+                    self._handle_backtest_source(experiment_id, account)
+                    return
+                if path.startswith("/api/backtests/") and path.endswith(
+                    "/holdout-clips"
+                ):
+                    experiment_id = unquote(
+                        path[len("/api/backtests/") : -len("/holdout-clips")]
+                    ).strip("/")
+                    self._handle_backtest_holdout_clips(experiment_id, account)
+                    return
+                if path.startswith("/api/backtests/") and "/alignments/" in path:
+                    remainder = path[len("/api/backtests/") :]
+                    experiment_id, actual_id = remainder.split("/alignments/", 1)
+                    self._handle_backtest_alignment(
+                        unquote(experiment_id.strip("/")),
+                        unquote(actual_id.strip("/")),
+                        account,
+                    )
                     return
                 if path == "/api/account/contribution-settings":
                     self._handle_contribution_settings(account)
@@ -673,6 +881,120 @@ def create_handler(application: ProductApplication) -> type[BaseHTTPRequestHandl
                 clip_plan,
             )
             self._send_json(result, HTTPStatus.ACCEPTED)
+
+        def _multipart_form(self, maximum_bytes: int, label: str) -> cgi.FieldStorage:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            if content_length <= 0 or content_length > maximum_bytes:
+                raise ValueError(f"{label} is empty or exceeds the upload limit")
+            content_type = self.headers.get("Content-Type", "")
+            if not content_type.startswith("multipart/form-data"):
+                raise ValueError(f"{label} must use multipart form data")
+            return cgi.FieldStorage(
+                fp=self.rfile,
+                headers=self.headers,
+                environ={
+                    "REQUEST_METHOD": "POST",
+                    "CONTENT_TYPE": content_type,
+                    "CONTENT_LENGTH": str(content_length),
+                },
+                keep_blank_values=True,
+            )
+
+        @staticmethod
+        def _file_fields(form: cgi.FieldStorage, name: str) -> list[Any]:
+            if name not in form:
+                return []
+            value = form[name]
+            fields = value if isinstance(value, list) else [value]
+            return [field for field in fields if getattr(field, "filename", None)]
+
+        def _handle_backtest_create(self, account: dict[str, Any]) -> None:
+            form = self._multipart_form(
+                MAXIMUM_ANALYTICS_BYTES + 65_536, "Historical test setup"
+            )
+            tracker_field = form["tracker"] if "tracker" in form else None
+            if tracker_field is None or not tracker_field.filename:
+                raise ValueError("Choose the channel stats tracker")
+            payload = tracker_field.file.read(MAXIMUM_ANALYTICS_BYTES + 1)
+            reference_keys = [
+                str(form.getfirst("reference_key_1", "training_vid_1")).strip(),
+                str(form.getfirst("reference_key_2", "training_vid_2")).strip(),
+            ]
+            holdout_key = str(form.getfirst("holdout_key", "test_vid")).strip()
+            tracker = parse_backtest_tracker(
+                tracker_field.filename, payload, reference_keys, holdout_key
+            )
+            experiment = application.store.create_backtest_experiment(
+                account["creator_id"],
+                str(form.getfirst("name", "Channel recommendation test")),
+                tracker_field.filename,
+                tracker,
+            )
+            experiment.pop("serving_release", None)
+            self._send_json({"experiment": experiment}, HTTPStatus.CREATED)
+
+        def _handle_backtest_source(
+            self, experiment_id: str, account: dict[str, Any]
+        ) -> None:
+            form = self._multipart_form(MAXIMUM_UPLOAD_BYTES, "Historical video upload")
+            video_field = form["video"] if "video" in form else None
+            if video_field is None or not video_field.filename:
+                raise ValueError("Choose the long source video")
+            role = str(form.getfirst("role", "reference")).strip()
+            source_key = str(form.getfirst("source_key", "")).strip()
+            shorts = self._file_fields(form, "shorts")
+            if len(shorts) > MAXIMUM_BACKTEST_SHORTS:
+                raise ValueError(
+                    f"Choose at most {MAXIMUM_BACKTEST_SHORTS} Shorts per upload"
+                )
+            experiment = application.accept_backtest_source(
+                account,
+                experiment_id,
+                source_key,
+                role,
+                video_field,
+                shorts,
+            )
+            experiment.pop("serving_release", None)
+            self._send_json({"experiment": experiment}, HTTPStatus.ACCEPTED)
+
+        def _handle_backtest_holdout_clips(
+            self, experiment_id: str, account: dict[str, Any]
+        ) -> None:
+            form = self._multipart_form(MAXIMUM_UPLOAD_BYTES, "Test Short upload")
+            shorts = self._file_fields(form, "shorts")
+            if not shorts:
+                raise ValueError("Choose the organization-selected test Shorts")
+            if len(shorts) > MAXIMUM_BACKTEST_SHORTS:
+                raise ValueError(
+                    f"Choose at most {MAXIMUM_BACKTEST_SHORTS} test Shorts"
+                )
+            experiment = application.accept_backtest_holdout_clips(
+                account, experiment_id, shorts
+            )
+            experiment.pop("serving_release", None)
+            self._send_json({"experiment": experiment}, HTTPStatus.CREATED)
+
+        def _handle_backtest_alignment(
+            self, experiment_id: str, actual_id: str, account: dict[str, Any]
+        ) -> None:
+            application.store.get_backtest_experiment(
+                experiment_id, account["creator_id"]
+            )
+            actual = application.store.get_backtest_actual_clip(
+                actual_id, account["creator_id"]
+            )
+            if actual["experiment_id"] != experiment_id:
+                raise KeyError(actual_id)
+            value = self._read_json()
+            experiment = application.processor.correct_backtest_alignment(
+                actual_id,
+                account["creator_id"],
+                value.get("start_seconds"),
+                value.get("end_seconds"),
+            )
+            experiment.pop("serving_release", None)
+            self._send_json({"experiment": experiment})
 
         def _handle_decision(self, clip_id: str, account: dict[str, Any]) -> None:
             value = self._read_json()

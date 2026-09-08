@@ -15,6 +15,8 @@ from pathlib import Path
 from statistics import median
 from typing import Any
 
+import numpy as np
+
 from creatorcut.account_security import (
     DUMMY_PASSWORD_VERIFIER,
     create_password_verifier,
@@ -30,9 +32,12 @@ EDITORIAL_EVENT_WEIGHTS = {
     "download_original": 1.0,
     "download_edited": 1.0,
     "custom_created": 1.0,
+    "historical_selected": 1.0,
     "review_closed_unselected": -0.35,
     "reject": -1.0,
 }
+BACKTEST_CALIBRATION_PRIOR_STRENGTH = 8.0
+MAXIMUM_BACKTEST_CALIBRATION_ADJUSTMENT = 0.30
 PERSONALIZATION_PRIOR_STRENGTH = 8.0
 MINIMUM_EDITORIAL_DECISIONS = 3
 MAXIMUM_PERSONALIZATION_ADJUSTMENT = 0.35
@@ -380,6 +385,65 @@ class ProductStore:
                 created_at TEXT NOT NULL
             )
             """,
+            """
+            CREATE TABLE IF NOT EXISTS backtest_experiments (
+                id TEXT PRIMARY KEY,
+                creator_id TEXT NOT NULL REFERENCES creator_profiles(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                tracker_filename TEXT NOT NULL,
+                tracker_json TEXT NOT NULL,
+                prediction_snapshot_json TEXT,
+                serving_release_json TEXT,
+                evaluation_json TEXT,
+                predictions_frozen_at TEXT,
+                evaluated_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS backtest_sources (
+                id TEXT PRIMARY KEY,
+                experiment_id TEXT NOT NULL
+                    REFERENCES backtest_experiments(id) ON DELETE CASCADE,
+                source_key TEXT NOT NULL,
+                role TEXT NOT NULL CHECK(role IN ('reference', 'holdout')),
+                video_id TEXT REFERENCES videos(id) ON DELETE SET NULL,
+                status TEXT NOT NULL,
+                error_message TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(experiment_id, source_key)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS backtest_actual_clips (
+                id TEXT PRIMARY KEY,
+                experiment_id TEXT NOT NULL
+                    REFERENCES backtest_experiments(id) ON DELETE CASCADE,
+                source_key TEXT NOT NULL,
+                role TEXT NOT NULL CHECK(role IN ('reference', 'holdout')),
+                content_id TEXT NOT NULL,
+                source_url TEXT,
+                uploaded_filename TEXT,
+                media_path TEXT,
+                status TEXT NOT NULL,
+                source_start_seconds REAL,
+                source_end_seconds REAL,
+                alignment_score REAL,
+                alignment_method TEXT,
+                compound_edit_detected INTEGER NOT NULL DEFAULT 0,
+                segments_json TEXT NOT NULL DEFAULT '[]',
+                model_clip_id TEXT REFERENCES clips(id) ON DELETE SET NULL,
+                views INTEGER,
+                likes INTEGER,
+                comments INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(experiment_id, content_id)
+            )
+            """,
             "CREATE INDEX IF NOT EXISTS idx_videos_creator_id ON videos(creator_id)",
             "CREATE INDEX IF NOT EXISTS idx_auth_sessions_creator_id ON auth_sessions(creator_id)",
             "CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at)",
@@ -417,6 +481,18 @@ class ProductStore:
             """
             CREATE INDEX IF NOT EXISTS idx_repurposing_feedback_creator
             ON repurposing_feedback(creator_id, created_at)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_backtest_experiments_creator
+            ON backtest_experiments(creator_id, created_at)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_backtest_sources_video
+            ON backtest_sources(video_id)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_backtest_actual_source
+            ON backtest_actual_clips(experiment_id, source_key, status)
             """,
         )
         with self._connect() as connection:
@@ -478,6 +554,8 @@ class ProductStore:
                 "community_semantic_adjustment": "REAL NOT NULL DEFAULT 0",
                 "community_lineage_json": "TEXT NOT NULL DEFAULT '{}'",
                 "multimodal_features_json": "TEXT NOT NULL DEFAULT '{}'",
+                "backtest_calibration_adjustment": "REAL NOT NULL DEFAULT 0",
+                "backtest_lineage_json": "TEXT NOT NULL DEFAULT '{}'",
             },
             "performance_reports": {
                 "engaged_views": "INTEGER",
@@ -889,28 +967,54 @@ class ProductStore:
         original_filename: str,
         media_path: Path,
         clip_plan: dict[str, Any] | None = None,
+        enqueue_processing: bool = True,
     ) -> dict[str, Any]:
         """Register an uploaded source before background inference begins."""
         video_id = f"upload_{uuid.uuid4().hex}"
         created_at = utc_now()
+        status = "queued" if enqueue_processing else "staging"
         with self._write_lock, self._connect() as connection:
             connection.execute(
                 """
                 INSERT INTO videos(
                     id, creator_id, original_filename, media_path, status,
                     clip_plan_json, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     video_id,
                     creator_id,
                     original_filename,
                     media_path.as_posix(),
+                    status,
                     json.dumps(clip_plan or {}, sort_keys=True),
                     created_at,
                     created_at,
                 ),
             )
+            if enqueue_processing:
+                connection.execute(
+                    """
+                    INSERT INTO processing_jobs(
+                        video_id, status, attempt_count, max_attempts, available_at,
+                        created_at, updated_at
+                    ) VALUES (?, 'queued', 0, 3, ?, ?, ?)
+                    """,
+                    (video_id, created_at, created_at, created_at),
+                )
+        return self.get_video(video_id)
+
+    def enqueue_video(self, video_id: str) -> dict[str, Any]:
+        """Publish a fully staged upload to the durable processing queue."""
+        now = utc_now()
+        with self._write_lock, self._connect() as connection:
+            video = connection.execute(
+                "SELECT status FROM videos WHERE id = ?", (video_id,)
+            ).fetchone()
+            if video is None:
+                raise KeyError(video_id)
+            if video["status"] != "staging":
+                raise ValueError("Only a staged video can be queued")
             connection.execute(
                 """
                 INSERT INTO processing_jobs(
@@ -918,7 +1022,11 @@ class ProductStore:
                     created_at, updated_at
                 ) VALUES (?, 'queued', 0, 3, ?, ?, ?)
                 """,
-                (video_id, created_at, created_at, created_at),
+                (video_id, now, now, now),
+            )
+            connection.execute(
+                "UPDATE videos SET status = 'queued', updated_at = ? WHERE id = ?",
+                (now, video_id),
             )
         return self.get_video(video_id)
 
@@ -1234,10 +1342,11 @@ class ProductStore:
                         community_editorial_adjustment,
                         community_performance_adjustment,
                         community_semantic_adjustment, community_lineage_json,
-                        multimodal_features_json, created_at
+                        multimodal_features_json, backtest_calibration_adjustment,
+                        backtest_lineage_json, created_at
                     ) VALUES (
                         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                     )
                     """,
                     (
@@ -1273,6 +1382,8 @@ class ProductStore:
                         clip.get("community_semantic_adjustment", 0.0),
                         json.dumps(clip.get("community_lineage", {}), sort_keys=True),
                         json.dumps(clip.get("multimodal_features", {}), sort_keys=True),
+                        clip.get("backtest_calibration_adjustment", 0.0),
+                        json.dumps(clip.get("backtest_lineage", {}), sort_keys=True),
                         utc_now(),
                     ),
                 )
@@ -1337,6 +1448,10 @@ class ProductStore:
                                 "multimodal_features": clip.get(
                                     "multimodal_features", {}
                                 ),
+                                "backtest_calibration_adjustment": clip.get(
+                                    "backtest_calibration_adjustment", 0.0
+                                ),
+                                "backtest_lineage": clip.get("backtest_lineage", {}),
                             },
                             sort_keys=True,
                         ),
@@ -1344,8 +1459,19 @@ class ProductStore:
                     ),
                 )
 
-    def save_custom_clip(self, video_id: str, clip: dict[str, Any]) -> str:
-        """Persist a creator-authored interval as preference evidence, not a model impression."""
+    def save_custom_clip(
+        self,
+        video_id: str,
+        clip: dict[str, Any],
+        *,
+        origin: str = "creator",
+        event_type: str = "custom_created",
+    ) -> str:
+        """Persist a creator or historical interval as explicit preference evidence."""
+        if origin not in {"creator", "historical_reference", "historical_holdout"}:
+            raise ValueError("Unsupported custom clip origin")
+        if event_type not in {"custom_created", "historical_selected"}:
+            raise ValueError("Unsupported custom clip event")
         video = self.get_video(video_id)
         clip_id = f"{video_id}_custom_{uuid.uuid4().hex}"
         with self._write_lock, self._connect() as connection:
@@ -1367,10 +1493,11 @@ class ProductStore:
                     community_editorial_adjustment,
                     community_performance_adjustment,
                     community_semantic_adjustment, community_lineage_json,
-                    multimodal_features_json, created_at
+                    multimodal_features_json, backtest_calibration_adjustment,
+                    backtest_lineage_json, created_at
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -1387,7 +1514,7 @@ class ProductStore:
                     clip["explanation"],
                     None,
                     clip.get("ranking_model_version"),
-                    "creator",
+                    origin,
                     clip.get("editorial_adjustment", 0.0),
                     clip.get("performance_adjustment", 0.0),
                     clip.get("semantic_performance_adjustment", 0.0),
@@ -1404,6 +1531,8 @@ class ProductStore:
                     clip.get("community_semantic_adjustment", 0.0),
                     json.dumps(clip.get("community_lineage", {}), sort_keys=True),
                     json.dumps(clip.get("multimodal_features", {}), sort_keys=True),
+                    clip.get("backtest_calibration_adjustment", 0.0),
+                    json.dumps(clip.get("backtest_lineage", {}), sort_keys=True),
                     utc_now(),
                 ),
             )
@@ -1412,17 +1541,18 @@ class ProductStore:
                 INSERT INTO feedback_events(
                     creator_id, video_id, clip_id, event_type, start_seconds,
                     end_seconds, payload_json, created_at
-                ) VALUES (?, ?, ?, 'custom_created', ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     video["creator_id"],
                     video_id,
                     clip_id,
+                    event_type,
                     clip["start_seconds"],
                     clip["end_seconds"],
                     json.dumps(
                         {
-                            "origin": "creator",
+                            "origin": origin,
                             "ranking_model_version": clip.get(
                                 "ranking_model_version"
                             ),
@@ -1463,7 +1593,8 @@ class ProductStore:
                 SELECT COUNT(*) FROM feedback_events
                 WHERE video_id = ?
                   AND event_type IN (
-                      'download_original', 'download_edited', 'custom_created'
+                      'download_original', 'download_edited', 'custom_created',
+                      'historical_selected'
                   )
                 """,
                 (video_id,),
@@ -1561,6 +1692,656 @@ class ProductStore:
                 (creator_id, max(1, min(limit, 50))),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def create_backtest_experiment(
+        self,
+        creator_id: str,
+        name: str,
+        tracker_filename: str,
+        tracker: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Create a three-video historical test with holdout outcomes quarantined."""
+        label = str(name or "").strip() or "Channel recommendation test"
+        if len(label) > 120:
+            raise ValueError("The historical test name must be 120 characters or fewer")
+        experiment_id = f"backtest_{uuid.uuid4().hex}"
+        created_at = utc_now()
+        holdout_key = tracker["holdout_key"]
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO backtest_experiments(
+                    id, creator_id, name, status, tracker_filename, tracker_json,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, 'awaiting_references', ?, ?, ?, ?)
+                """,
+                (
+                    experiment_id,
+                    creator_id,
+                    label,
+                    Path(tracker_filename).name,
+                    json.dumps(tracker, sort_keys=True),
+                    created_at,
+                    created_at,
+                ),
+            )
+            for source_key in [*tracker["reference_keys"], holdout_key]:
+                role = "holdout" if source_key == holdout_key else "reference"
+                connection.execute(
+                    """
+                    INSERT INTO backtest_sources(
+                        id, experiment_id, source_key, role, status, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, 'awaiting_upload', ?, ?)
+                    """,
+                    (
+                        f"backtest_source_{uuid.uuid4().hex}",
+                        experiment_id,
+                        source_key,
+                        role,
+                        created_at,
+                        created_at,
+                    ),
+                )
+            for row in tracker["clip_rows"]:
+                connection.execute(
+                    """
+                    INSERT INTO backtest_actual_clips(
+                        id, experiment_id, source_key, role, content_id, source_url,
+                        status, views, likes, comments, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, 'awaiting_upload', ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"backtest_actual_{uuid.uuid4().hex}",
+                        experiment_id,
+                        row["source_key"],
+                        row["role"],
+                        row["content_id"],
+                        row.get("url"),
+                        row.get("views"),
+                        row.get("likes"),
+                        row.get("comments"),
+                        created_at,
+                        created_at,
+                    ),
+                )
+        return self.get_backtest_experiment(experiment_id, creator_id)
+
+    def list_backtest_experiments(
+        self, creator_id: str, limit: int = 10
+    ) -> list[dict[str, Any]]:
+        """List creator-owned historical tests without revealing sealed holdout rows."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id FROM backtest_experiments
+                WHERE creator_id = ? ORDER BY created_at DESC LIMIT ?
+                """,
+                (creator_id, max(1, min(limit, 25))),
+            ).fetchall()
+        return [
+            self.get_backtest_experiment(row["id"], creator_id, compact=True)
+            for row in rows
+        ]
+
+    def get_backtest_experiment(
+        self,
+        experiment_id: str,
+        creator_id: str | None = None,
+        *,
+        compact: bool = False,
+    ) -> dict[str, Any]:
+        """Return the creator workflow while preserving the holdout reveal boundary."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM backtest_experiments WHERE id = ?", (experiment_id,)
+            ).fetchone()
+            if row is None or (creator_id is not None and row["creator_id"] != creator_id):
+                raise KeyError(experiment_id)
+            sources = [
+                dict(value)
+                for value in connection.execute(
+                    """
+                    SELECT id, source_key, role, video_id, status, error_message,
+                           created_at, updated_at
+                    FROM backtest_sources WHERE experiment_id = ?
+                    ORDER BY CASE role WHEN 'reference' THEN 0 ELSE 1 END, source_key
+                    """,
+                    (experiment_id,),
+                ).fetchall()
+            ]
+            actual_rows = [
+                dict(value)
+                for value in connection.execute(
+                    """
+                    SELECT id, source_key, role, content_id, source_url, uploaded_filename,
+                           status, source_start_seconds, source_end_seconds, alignment_score,
+                           alignment_method, compound_edit_detected, segments_json,
+                           model_clip_id, views, likes, comments, updated_at
+                    FROM backtest_actual_clips WHERE experiment_id = ?
+                    ORDER BY source_key, content_id
+                    """,
+                    (experiment_id,),
+                ).fetchall()
+            ]
+        value = dict(row)
+        tracker = json.loads(value.pop("tracker_json"))
+        snapshot = json.loads(value.pop("prediction_snapshot_json") or "null")
+        value["serving_release"] = json.loads(value.pop("serving_release_json") or "null")
+        value["evaluation"] = json.loads(value.pop("evaluation_json") or "null")
+        reference_rows = []
+        holdout_rows = []
+        for actual in actual_rows:
+            actual["compound_edit_detected"] = bool(actual["compound_edit_detected"])
+            actual["segments"] = json.loads(actual.pop("segments_json") or "[]")
+            (reference_rows if actual["role"] == "reference" else holdout_rows).append(
+                actual
+            )
+        reference_sources = [source for source in sources if source["role"] == "reference"]
+        aligned_reference_count = sum(
+            row["status"] in {"aligned", "manually_aligned"} for row in reference_rows
+        )
+        references_ready = (
+            len(reference_sources) == 2
+            and all(
+                source["status"] in {"ready", "ready_with_warnings"}
+                for source in reference_sources
+            )
+            and aligned_reference_count >= 5
+        )
+        holdout_source = next(source for source in sources if source["role"] == "holdout")
+        predictions_frozen = bool(value.get("predictions_frozen_at") and snapshot)
+        holdout_uploaded = sum(bool(row["uploaded_filename"]) for row in holdout_rows)
+        result = {
+            **value,
+            "schema": "creatorcut_historical_backtest_v1",
+            "reference_keys": tracker["reference_keys"],
+            "holdout_key": tracker["holdout_key"],
+            "sources": sources,
+            "reference_clips": reference_rows,
+            "reference_clip_count": len(reference_rows),
+            "aligned_reference_clip_count": aligned_reference_count,
+            "references_ready": references_ready,
+            "holdout": {
+                "source_key": tracker["holdout_key"],
+                "expected_clip_count": tracker["clip_counts"][tracker["holdout_key"]],
+                "video_id": holdout_source["video_id"],
+                "status": holdout_source["status"],
+                "predictions_frozen": predictions_frozen,
+                "uploaded_actual_clip_count": holdout_uploaded,
+                "actuals_revealed": predictions_frozen,
+                "actual_clips": holdout_rows if predictions_frozen else [],
+            },
+            "prediction_snapshot": snapshot,
+            "can_upload_holdout": references_ready
+            and holdout_source["status"] == "awaiting_upload",
+            "can_upload_holdout_clips": predictions_frozen,
+        }
+        if compact:
+            return {
+                key: result[key]
+                for key in (
+                    "id",
+                    "name",
+                    "status",
+                    "created_at",
+                    "updated_at",
+                    "reference_clip_count",
+                    "aligned_reference_clip_count",
+                    "references_ready",
+                    "holdout",
+                )
+            }
+        return result
+
+    def attach_backtest_source(
+        self,
+        experiment_id: str,
+        creator_id: str,
+        source_key: str,
+        role: str,
+        video_id: str,
+    ) -> None:
+        """Link an uploaded long video to its declared experiment role."""
+        experiment = self.get_backtest_experiment(experiment_id, creator_id)
+        source = next(
+            (
+                item
+                for item in experiment["sources"]
+                if item["source_key"] == source_key and item["role"] == role
+            ),
+            None,
+        )
+        if source is None:
+            raise ValueError("The source video ID does not match this historical test")
+        if source["video_id"] is not None:
+            raise ValueError("That source video has already been uploaded")
+        if role == "holdout" and not experiment["can_upload_holdout"]:
+            raise ValueError("Finish both reference videos before uploading the test video")
+        now = utc_now()
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE backtest_sources
+                SET video_id = ?, status = 'processing', error_message = NULL, updated_at = ?
+                WHERE id = ?
+                """,
+                (video_id, now, source["id"]),
+            )
+            connection.execute(
+                """
+                UPDATE backtest_experiments SET status = ?, updated_at = ? WHERE id = ?
+                """,
+                (
+                    "processing_holdout" if role == "holdout" else "processing_references",
+                    now,
+                    experiment_id,
+                ),
+            )
+
+    def save_backtest_short_upload(
+        self,
+        experiment_id: str,
+        creator_id: str,
+        source_key: str,
+        original_filename: str,
+        media_path: Path,
+    ) -> str:
+        """Attach one Short file to the tracker row with the same filename stem."""
+        self.get_backtest_experiment(experiment_id, creator_id)
+        content_id = Path(original_filename).stem
+        with self._write_lock, self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, source_key, status FROM backtest_actual_clips
+                WHERE experiment_id = ? AND content_id = ?
+                """,
+                (experiment_id, content_id),
+            ).fetchone()
+            if row is None or row["source_key"] != source_key:
+                raise ValueError(
+                    f"{original_filename} does not match a {source_key} clip in the tracker"
+                )
+            if row["status"] != "awaiting_upload":
+                raise ValueError(f"{original_filename} has already been uploaded")
+            connection.execute(
+                """
+                UPDATE backtest_actual_clips
+                SET uploaded_filename = ?, media_path = ?, status = 'uploaded', updated_at = ?
+                WHERE id = ?
+                """,
+                (Path(original_filename).name, media_path.as_posix(), utc_now(), row["id"]),
+            )
+        return str(row["id"])
+
+    def backtest_source_for_video(self, video_id: str) -> dict[str, Any] | None:
+        """Return worker-only experiment context for one queued long video."""
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT backtest_sources.*, backtest_experiments.creator_id,
+                       backtest_experiments.predictions_frozen_at
+                FROM backtest_sources JOIN backtest_experiments
+                  ON backtest_experiments.id = backtest_sources.experiment_id
+                WHERE backtest_sources.video_id = ?
+                """,
+                (video_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def pending_backtest_actual_clips(
+        self, experiment_id: str, source_key: str
+    ) -> list[dict[str, Any]]:
+        """Return private uploaded Short paths for background alignment."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM backtest_actual_clips
+                WHERE experiment_id = ? AND source_key = ?
+                  AND media_path IS NOT NULL AND model_clip_id IS NULL
+                  AND status IN ('uploaded', 'needs_review')
+                ORDER BY content_id
+                """,
+                (experiment_id, source_key),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_backtest_actual_clip(
+        self, actual_id: str, creator_id: str | None = None
+    ) -> dict[str, Any]:
+        """Return one private actual-clip record for alignment work."""
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT backtest_actual_clips.*, backtest_experiments.creator_id,
+                       backtest_sources.video_id
+                FROM backtest_actual_clips
+                JOIN backtest_experiments
+                  ON backtest_experiments.id = backtest_actual_clips.experiment_id
+                JOIN backtest_sources
+                  ON backtest_sources.experiment_id = backtest_actual_clips.experiment_id
+                 AND backtest_sources.source_key = backtest_actual_clips.source_key
+                WHERE backtest_actual_clips.id = ?
+                """,
+                (actual_id,),
+            ).fetchone()
+        if row is None or (creator_id is not None and row["creator_id"] != creator_id):
+            raise KeyError(actual_id)
+        value = dict(row)
+        value["segments"] = json.loads(value.pop("segments_json") or "[]")
+        return value
+
+    def save_backtest_alignment(
+        self,
+        actual_id: str,
+        alignment: dict[str, Any],
+        model_clip_id: str | None = None,
+        *,
+        manual: bool = False,
+    ) -> None:
+        """Persist an automatic or corrected source mapping for one actual Short."""
+        status = "manually_aligned" if manual else alignment["status"]
+        with self._write_lock, self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE backtest_actual_clips
+                SET status = ?, source_start_seconds = ?, source_end_seconds = ?,
+                    alignment_score = ?, alignment_method = ?,
+                    compound_edit_detected = ?, segments_json = ?, model_clip_id = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    status,
+                    alignment.get("source_start_seconds"),
+                    alignment.get("source_end_seconds"),
+                    alignment.get("confidence"),
+                    "manual" if manual else alignment.get("method"),
+                    int(bool(alignment.get("compound_edit_detected"))),
+                    json.dumps(alignment.get("segments", []), sort_keys=True),
+                    model_clip_id,
+                    utc_now(),
+                    actual_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(actual_id)
+
+    def mark_backtest_source(
+        self, experiment_id: str, source_key: str, status: str, error: str | None = None
+    ) -> None:
+        """Advance one long-video stage without changing the ordinary video job."""
+        now = utc_now()
+        with self._write_lock, self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE backtest_sources SET status = ?, error_message = ?, updated_at = ?
+                WHERE experiment_id = ? AND source_key = ?
+                """,
+                (status, str(error)[:500] if error else None, now, experiment_id, source_key),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(source_key)
+            reference_states = [
+                row["status"]
+                for row in connection.execute(
+                    """
+                    SELECT status FROM backtest_sources
+                    WHERE experiment_id = ? AND role = 'reference'
+                    """,
+                    (experiment_id,),
+                ).fetchall()
+            ]
+            if reference_states and all(
+                value in {"ready", "ready_with_warnings"} for value in reference_states
+            ):
+                connection.execute(
+                    """
+                    UPDATE backtest_experiments
+                    SET status = 'references_ready', updated_at = ? WHERE id = ?
+                    """,
+                    (now, experiment_id),
+                )
+
+    @staticmethod
+    def _ridge_profile(
+        rows: list[dict[str, Any]], targets: dict[str, float]
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        matrix = np.asarray(
+            [ProductStore._stored_preference_features(row) for row in rows], dtype=float
+        )
+        outcomes = np.asarray([targets[row["clip_id"]] for row in rows], dtype=float)
+        mean = matrix.mean(axis=0)
+        scale = matrix.std(axis=0)
+        scale[scale < 1e-6] = 1.0
+        standardized = (matrix - mean) / scale
+        source_counts = Counter(row["source_key"] for row in rows)
+        sample_weights = np.asarray(
+            [1.0 / source_counts[row["source_key"]] for row in rows], dtype=float
+        )
+        sample_weights *= len(rows) / sample_weights.sum()
+        weighted = standardized * np.sqrt(sample_weights)[:, None]
+        weighted_outcomes = outcomes * np.sqrt(sample_weights)
+        penalty = BACKTEST_CALIBRATION_PRIOR_STRENGTH * np.eye(standardized.shape[1])
+        coefficients = np.linalg.solve(
+            weighted.T @ weighted + penalty, weighted.T @ weighted_outcomes
+        )
+        return mean, scale, coefficients
+
+    def personalize_backtest_candidates(
+        self,
+        experiment_id: str,
+        candidates: list[dict[str, Any]],
+        platform: str = "youtube",
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Fit a regularized channel layer from reference clips only."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT performance_reports.*, backtest_actual_clips.source_key,
+                       clips.duration_seconds, clips.predicted_targets_json,
+                       clips.transcript_text, clips.semantic_embedding_json,
+                       clips.multimodal_features_json
+                FROM backtest_actual_clips
+                JOIN clips ON clips.id = backtest_actual_clips.model_clip_id
+                JOIN performance_reports ON performance_reports.clip_id = clips.id
+                WHERE backtest_actual_clips.experiment_id = ?
+                  AND backtest_actual_clips.role = 'reference'
+                  AND performance_reports.platform = ?
+                ORDER BY performance_reports.id
+                """,
+                (experiment_id, platform),
+            ).fetchall()
+        latest = {row["clip_id"]: dict(row) for row in rows}
+        examples, targets = self._performance_targets(list(latest.values()))
+        source_count = len({row["source_key"] for row in examples})
+        active = (
+            len(examples) >= MINIMUM_PERFORMANCE_EXAMPLES
+            and source_count >= 2
+            and max(targets.values(), default=0.0) != min(targets.values(), default=0.0)
+        )
+        if not active:
+            prepared = [
+                {
+                    **candidate,
+                    "editorial_adjustment": 0.0,
+                    "performance_adjustment": 0.0,
+                    "semantic_performance_adjustment": 0.0,
+                    "source_retention_adjustment": 0.0,
+                    "backtest_calibration_adjustment": 0.0,
+                    "backtest_lineage": {
+                        "active": False,
+                        "eligible_clip_count": len(examples),
+                        "source_video_count": source_count,
+                    },
+                    "personalized_score": float(candidate["global_score"]),
+                }
+                for candidate in candidates
+            ]
+            return prepared, prepared[0]["backtest_lineage"] if prepared else {"active": False}
+
+        mean, scale, coefficients = self._ridge_profile(examples, targets)
+        shrinkage = len(examples) / (
+            len(examples) + BACKTEST_CALIBRATION_PRIOR_STRENGTH
+        )
+        semantic_examples = [
+            (vector, targets[row["clip_id"]])
+            for row in examples
+            if (vector := self._semantic_vector(row.get("semantic_embedding_json")))
+            is not None
+        ]
+        metadata = {
+            "active": True,
+            "schema": "creatorcut_reference_calibration_v1",
+            "experiment_id": experiment_id,
+            "eligible_clip_count": len(examples),
+            "source_video_count": source_count,
+            "shrinkage": round(shrinkage, 6),
+            "maximum_adjustment": MAXIMUM_BACKTEST_CALIBRATION_ADJUSTMENT,
+            "feature_coefficients": dict(
+                zip(PREFERENCE_FEATURE_NAMES, coefficients.astype(float), strict=True)
+            ),
+            "semantic_example_count": len(semantic_examples),
+        }
+        adjusted = []
+        for candidate in candidates:
+            features = np.asarray(preference_features(candidate), dtype=float)
+            structured_outcome = float(np.dot((features - mean) / scale, coefficients))
+            semantic_adjustment = self._semantic_outcome_adjustment(
+                candidate.get("semantic_embedding"), semantic_examples, shrinkage
+            )
+            structured_adjustment = max(
+                -MAXIMUM_STRUCTURED_PERFORMANCE_ADJUSTMENT,
+                min(
+                    MAXIMUM_STRUCTURED_PERFORMANCE_ADJUSTMENT,
+                    shrinkage * structured_outcome * MAXIMUM_STRUCTURED_PERFORMANCE_ADJUSTMENT,
+                ),
+            )
+            combined = structured_adjustment + semantic_adjustment
+            combined = max(
+                -MAXIMUM_BACKTEST_CALIBRATION_ADJUSTMENT,
+                min(MAXIMUM_BACKTEST_CALIBRATION_ADJUSTMENT, combined),
+            )
+            estimated = max(
+                0.0,
+                min(
+                    100.0,
+                    50.0
+                    + 50.0
+                    * max(
+                        -1.0,
+                        min(
+                            1.0,
+                            shrinkage * structured_outcome
+                            + semantic_adjustment / MAXIMUM_SEMANTIC_PERFORMANCE_ADJUSTMENT,
+                        ),
+                    ),
+                ),
+            )
+            lineage = {**metadata, "estimated_relative_performance": round(estimated, 2)}
+            adjusted.append(
+                {
+                    **candidate,
+                    "editorial_adjustment": 0.0,
+                    "performance_adjustment": structured_adjustment,
+                    "semantic_performance_adjustment": semantic_adjustment,
+                    "source_retention_adjustment": 0.0,
+                    "backtest_calibration_adjustment": combined,
+                    "backtest_lineage": lineage,
+                    "personalized_score": float(candidate["global_score"]) + combined,
+                }
+            )
+        return adjusted, metadata
+
+    def freeze_backtest_predictions(
+        self, video_id: str, serving_release: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Snapshot holdout recommendations before accepting organization Short files."""
+        context = self.backtest_source_for_video(video_id)
+        if context is None or context["role"] != "holdout":
+            return None
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, platform_rank, start_seconds, end_seconds, duration_seconds,
+                       platform_score, backtest_lineage_json
+                FROM clips WHERE video_id = ? AND origin = 'model' AND platform = 'youtube'
+                ORDER BY platform_rank
+                """,
+                (video_id,),
+            ).fetchall()
+        predictions = []
+        scores = [float(row["platform_score"]) for row in rows]
+        score_mean = sum(scores) / len(scores) if scores else 0.0
+        score_std = (
+            math.sqrt(sum((score - score_mean) ** 2 for score in scores) / len(scores))
+            if scores
+            else 0.0
+        )
+        for row in rows:
+            lineage = json.loads(row["backtest_lineage_json"] or "{}")
+            estimate = lineage.get("estimated_relative_performance")
+            if estimate is None:
+                z = (float(row["platform_score"]) - score_mean) / max(score_std, 1e-6)
+                estimate = 100.0 / (1.0 + math.exp(-z))
+            predictions.append(
+                {
+                    "rank": int(row["platform_rank"]),
+                    "clip_id": row["id"],
+                    "start_seconds": float(row["start_seconds"]),
+                    "end_seconds": float(row["end_seconds"]),
+                    "duration_seconds": float(row["duration_seconds"]),
+                    "estimated_relative_performance": round(float(estimate), 2),
+                }
+            )
+        snapshot = {
+            "schema": "creatorcut_prediction_snapshot_v1",
+            "video_id": video_id,
+            "source_key": context["source_key"],
+            "created_at": utc_now(),
+            "recommendations": predictions,
+            "holdout_outcomes_used": False,
+        }
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE backtest_experiments
+                SET status = 'recommendations_frozen', prediction_snapshot_json = ?,
+                    serving_release_json = ?, predictions_frozen_at = ?, updated_at = ?
+                WHERE id = ? AND prediction_snapshot_json IS NULL
+                """,
+                (
+                    json.dumps(snapshot, sort_keys=True),
+                    json.dumps(serving_release, sort_keys=True),
+                    snapshot["created_at"],
+                    snapshot["created_at"],
+                    context["experiment_id"],
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE backtest_sources SET status = 'recommendations_frozen', updated_at = ?
+                WHERE id = ?
+                """,
+                (snapshot["created_at"], context["id"]),
+            )
+        return snapshot
+
+    def save_backtest_evaluation(
+        self, experiment_id: str, evaluation: dict[str, Any]
+    ) -> None:
+        """Persist a repeatable evaluation generated from the frozen snapshot."""
+        now = utc_now()
+        with self._write_lock, self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE backtest_experiments
+                SET status = 'evaluated', evaluation_json = ?, evaluated_at = ?, updated_at = ?
+                WHERE id = ? AND prediction_snapshot_json IS NOT NULL
+                """,
+                (json.dumps(evaluation, sort_keys=True), now, now, experiment_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Recommendations must be frozen before evaluation")
 
     def creator_ml_report(self, creator_id: str) -> dict[str, Any]:
         """Summarize serving, lineage, labels, edits, and adaptation for one creator."""
@@ -1925,6 +2706,18 @@ class ProductStore:
             contribution_rows = connection.execute(
                 "SELECT creator_id, performance_enabled FROM contribution_settings"
             ).fetchall()
+            backtests = connection.execute(
+                """
+                SELECT status, evaluation_json FROM backtest_experiments
+                ORDER BY created_at, id
+                """
+            ).fetchall()
+            backtest_actuals = connection.execute(
+                """
+                SELECT role, status, alignment_score, compound_edit_detected
+                FROM backtest_actual_clips ORDER BY created_at, id
+                """
+            ).fetchall()
 
         credentials = {row["creator_id"]: row for row in credential_rows}
         contribution_settings = {
@@ -1951,6 +2744,7 @@ class ProductStore:
                 "video_count": 0,
                 "model_clip_count": 0,
                 "custom_clip_count": 0,
+                "historical_clip_count": 0,
                 "presented_clip_ids": set(),
                 "selected_clip_ids": set(),
                 "rejected_clip_ids": set(),
@@ -1988,7 +2782,12 @@ class ProductStore:
         community_semantic_adjustments: list[float] = []
         for row in clips:
             account = accounts[row["creator_id"]]
-            key = "custom_clip_count" if row["origin"] == "creator" else "model_clip_count"
+            if row["origin"] == "model":
+                key = "model_clip_count"
+            elif row["origin"] == "creator":
+                key = "custom_clip_count"
+            else:
+                key = "historical_clip_count"
             account[key] += 1
             clip_origins[row["origin"]] += 1
             clip_platforms[row["platform"]] += 1
@@ -2147,6 +2946,11 @@ class ProductStore:
             "performance": numeric_summary(community_performance_adjustments),
             "semantic": numeric_summary(community_semantic_adjustments),
         }
+        evaluations = [
+            json.loads(row["evaluation_json"])
+            for row in backtests
+            if row["evaluation_json"]
+        ]
         rank_performance = []
         for rank in sorted(set(presented_by_rank) | set(selected_by_rank)):
             presented_count = len(presented_by_rank.get(rank, set()))
@@ -2229,6 +3033,51 @@ class ProductStore:
                 ),
                 "job_attempt_distribution": numeric_summary(
                     [float(row["attempt_count"]) for row in jobs]
+                ),
+            },
+            "historical_backtests": {
+                "experiment_count": len(backtests),
+                "status_counts": dict(
+                    sorted(Counter(row["status"] for row in backtests).items())
+                ),
+                "actual_clip_count": len(backtest_actuals),
+                "actual_clip_roles": dict(
+                    sorted(Counter(row["role"] for row in backtest_actuals).items())
+                ),
+                "alignment_status_counts": dict(
+                    sorted(Counter(row["status"] for row in backtest_actuals).items())
+                ),
+                "alignment_confidence": numeric_summary(
+                    [
+                        float(row["alignment_score"])
+                        for row in backtest_actuals
+                        if row["alignment_score"] is not None
+                    ]
+                ),
+                "compound_edit_count": sum(
+                    bool(row["compound_edit_detected"]) for row in backtest_actuals
+                ),
+                "evaluation_count": len(evaluations),
+                "top_k_recall_at_iou_50": numeric_summary(
+                    [
+                        float(report["top_k_recall_at_iou_50"])
+                        for report in evaluations
+                        if report.get("top_k_recall_at_iou_50") is not None
+                    ]
+                ),
+                "mean_best_iou": numeric_summary(
+                    [
+                        float(report["mean_best_iou"])
+                        for report in evaluations
+                        if report.get("mean_best_iou") is not None
+                    ]
+                ),
+                "performance_rank_correlation": numeric_summary(
+                    [
+                        float(report["performance_rank_correlation"])
+                        for report in evaluations
+                        if report.get("performance_rank_correlation") is not None
+                    ]
                 ),
             },
             "community_learning": community_learning,
@@ -2745,7 +3594,7 @@ class ProductStore:
                 JOIN clips ON clips.id = feedback_events.clip_id
                 WHERE feedback_events.event_type IN (
                       'download_original', 'download_edited', 'custom_created',
-                      'review_closed_unselected', 'reject'
+                      'historical_selected', 'review_closed_unselected', 'reject'
                   )
                 ORDER BY feedback_events.id
                 """
@@ -3553,7 +4402,7 @@ class ProductStore:
                 WHERE feedback_events.creator_id = ?
                   AND feedback_events.event_type IN (
                       'download_original', 'download_edited', 'custom_created',
-                      'review_closed_unselected', 'reject'
+                      'historical_selected', 'review_closed_unselected', 'reject'
                   )
                 ORDER BY feedback_events.id
                 """,
@@ -3734,7 +4583,7 @@ class ProductStore:
                 WHERE creator_id = ?
                   AND event_type IN (
                       'download_original', 'download_edited', 'custom_created',
-                      'review_closed_unselected', 'reject'
+                      'historical_selected', 'review_closed_unselected', 'reject'
                   )
                 """,
                 (creator_id,),
@@ -3949,6 +4798,9 @@ class ProductStore:
         )
         clip["community_lineage"] = json.loads(
             clip.pop("community_lineage_json", "{}")
+        )
+        clip["backtest_lineage"] = json.loads(
+            clip.pop("backtest_lineage_json", "{}")
         )
         clip.pop("semantic_embedding_json", None)
         return clip

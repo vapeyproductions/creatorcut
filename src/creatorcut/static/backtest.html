@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CreatorCut — historical recommendation test</title>
+    <link rel="stylesheet" href="/assets/product.css" />
+    <link rel="stylesheet" href="/assets/backtest.css" />
+  </head>
+  <body>
+    <header class="masthead">
+      <div><strong>CREATORCUT</strong><span>HISTORICAL TEST</span></div>
+      <nav class="masthead-actions"><a class="plain-link" href="/">BACK TO CLIP CREATOR</a></nav>
+    </header>
+
+    <main>
+      <section id="signin-required" hidden>
+        <p class="section-number">ACCOUNT REQUIRED</p>
+        <h1>Sign in before running a test</h1>
+        <p><a class="plain-link" href="/">RETURN TO SIGN IN</a></p>
+      </section>
+
+      <section id="setup-section" hidden>
+        <p class="section-number">01 / TEST SETUP</p>
+        <h1>Test recommendations against a channel’s published Shorts</h1>
+        <p class="backtest-intro">
+          Two long videos and their published Shorts calibrate the channel layer. The third video
+          stays held out until CreatorCut saves its recommendations.
+        </p>
+        <form id="setup-form" class="backtest-form">
+          <label>Test name <input name="name" value="Channel recommendation test" maxlength="120" /></label>
+          <label>First reference ID <input name="reference_key_1" value="training_vid_1" required /></label>
+          <label>Second reference ID <input name="reference_key_2" value="training_vid_2" required /></label>
+          <label>Held-out video ID <input name="holdout_key" value="test_vid" required /></label>
+          <label>
+            Stats tracker
+            <input name="tracker" type="file" accept=".xlsx,.csv,.tsv" required />
+          </label>
+          <button type="submit">CREATE HISTORICAL TEST</button>
+          <p id="setup-message" class="error" role="alert" hidden></p>
+        </form>
+        <div id="recent-tests" class="recent-tests" hidden>
+          <h2>Continue a saved test</h2>
+          <ul></ul>
+        </div>
+      </section>
+
+      <section id="workspace-section" hidden>
+        <div class="workspace-heading">
+          <div><p class="section-number">HISTORICAL TEST</p><h1 id="experiment-name"></h1></div>
+          <button id="new-test" class="plain-button" type="button">START ANOTHER TEST</button>
+        </div>
+        <p id="experiment-status" class="status-line" role="status"></p>
+        <div id="workflow-steps" class="workflow-steps"></div>
+      </section>
+
+      <section id="results-section" hidden>
+        <p class="section-number">04 / HOLDOUT RESULTS</p>
+        <h2>Recommendation comparison</h2>
+        <div id="metric-grid" class="metric-grid"></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Rank</th><th>CreatorCut interval</th><th>Closest published Short</th><th>Overlap</th><th>Estimated fit</th><th>Actual outcome</th></tr></thead>
+            <tbody id="match-table"></tbody>
+          </table>
+        </div>
+        <p class="small-print">
+          Actual outcome is a within-test index using views, likes per view, and comments per view.
+          It is useful for rank comparison, not a forecast of future views.
+        </p>
+      </section>
+    </main>
+
+    <template id="source-template">
+      <article class="source-card">
+        <div class="source-card-heading"><div><p class="source-role"></p><h2 class="source-key"></h2></div><span class="source-status"></span></div>
+        <p class="source-copy"></p>
+        <form class="source-form backtest-form">
+          <input name="role" type="hidden" />
+          <input name="source_key" type="hidden" />
+          <label>Long video <input name="video" type="file" accept="video/mp4,video/quicktime,video/webm,.m4v" required /></label>
+          <label class="short-input">Published Shorts <input name="shorts" type="file" accept="video/mp4,video/quicktime,video/webm,.m4v" multiple required /></label>
+          <button type="submit">UPLOAD AND PROCESS</button>
+          <p class="form-message error" role="alert" hidden></p>
+        </form>
+        <p class="expected-files small-print"></p>
+        <div class="alignment-list"></div>
+      </article>
+    </template>
+
+    <script src="/assets/backtest.js" defer></script>
+  </body>
+</html>

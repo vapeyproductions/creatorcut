@@ -1,0 +1,153 @@
+.backtest-intro {
+  max-width: 720px;
+  margin: -8px 0 28px;
+  font: 19px/1.45 Georgia, "Times New Roman", serif;
+}
+
+.backtest-form {
+  display: grid;
+  gap: 12px;
+  max-width: 720px;
+}
+
+.backtest-form label {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.backtest-form button {
+  justify-self: start;
+  padding: 8px 14px;
+  color: #fff;
+  background: #111;
+}
+
+.workspace-heading,
+.source-card-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: start;
+}
+
+.workflow-steps {
+  display: grid;
+  gap: 26px;
+  margin-top: 28px;
+}
+
+.source-card {
+  padding: 20px 0 0;
+  border-top: 4px solid #111;
+}
+
+.source-card h2 {
+  margin-bottom: 10px;
+  font-size: 34px;
+}
+
+.source-role,
+.source-status,
+.status-line {
+  font: 12px/1.4 "Courier New", monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.source-copy {
+  max-width: 720px;
+}
+
+.expected-files {
+  overflow-wrap: anywhere;
+}
+
+.alignment-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.alignment-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.5fr) 100px 100px 110px auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 0;
+  border-top: 1px solid #aaa;
+}
+
+.alignment-row input {
+  min-height: 32px;
+}
+
+.alignment-row button {
+  min-height: 32px;
+  white-space: nowrap;
+}
+
+.prediction-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+  margin: 18px 0;
+}
+
+.prediction-list article,
+.metric-grid article {
+  padding: 14px;
+  border: 1px solid #111;
+  background: #f7f6f0;
+}
+
+.prediction-list strong,
+.metric-grid strong {
+  display: block;
+  font: 28px/1 Georgia, "Times New Roman", serif;
+}
+
+.prediction-list span,
+.metric-grid span {
+  display: block;
+  margin-top: 6px;
+  font: 11px/1.35 "Courier New", monospace;
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 22px;
+}
+
+.table-wrap { overflow-x: auto; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #f7f6f0;
+}
+
+th,
+td {
+  padding: 10px;
+  border: 1px solid #111;
+  text-align: left;
+  vertical-align: top;
+  font-size: 13px;
+}
+
+th { font-family: "Courier New", monospace; }
+
+.recent-tests ul { padding: 0; list-style: none; }
+.recent-tests li { display: flex; gap: 12px; align-items: center; margin: 8px 0; }
+
+@media (max-width: 720px) {
+  .backtest-form label { grid-template-columns: 1fr; gap: 5px; }
+  .alignment-row { grid-template-columns: 1fr 1fr; }
+  .alignment-row strong { grid-column: 1 / -1; }
+  .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .workspace-heading { display: block; }
+}

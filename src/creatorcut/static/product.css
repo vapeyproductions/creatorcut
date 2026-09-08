@@ -140,6 +140,20 @@ h2 {
   font: 11px/1.4 "Courier New", monospace;
 }
 
+.historical-test-link {
+  max-width: 640px;
+  margin: 24px 0;
+  padding: 14px 0;
+  border-top: 1px solid #111;
+  border-bottom: 1px solid #111;
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+.historical-test-link a {
+  display: inline-block;
+  margin-left: 8px;
+}
+
 #upload-form {
   display: grid;
   grid-template-columns: 145px minmax(0, 460px);

@@ -37,6 +37,16 @@ const elements = {
   performanceMetrics: document.querySelector("#performance-metrics"),
   retentionPoints: document.querySelector("#retention-points"),
   outcomeDistributions: document.querySelector("#outcome-distributions"),
+  backtestCount: document.querySelector("#backtest-count"),
+  backtestEvaluationCount: document.querySelector("#backtest-evaluation-count"),
+  backtestActualCount: document.querySelector("#backtest-actual-count"),
+  backtestCompoundCount: document.querySelector("#backtest-compound-count"),
+  backtestStatuses: document.querySelector("#backtest-statuses"),
+  backtestAlignmentStatuses: document.querySelector("#backtest-alignment-statuses"),
+  backtestAlignmentConfidence: document.querySelector("#backtest-alignment-confidence"),
+  backtestRecall: document.querySelector("#backtest-recall"),
+  backtestIou: document.querySelector("#backtest-iou"),
+  backtestCorrelation: document.querySelector("#backtest-correlation"),
   communityEditorialCreators: document.querySelector("#community-editorial-creators"),
   communityEditorialDecisions: document.querySelector("#community-editorial-decisions"),
   communityPerformanceOptIns: document.querySelector("#community-performance-opt-ins"),
@@ -164,6 +174,20 @@ function renderReport(report) {
   renderCounts(elements.analyticsMetrics, report.analytics.metric_coverage);
   renderCounts(elements.performanceMetrics, report.analytics.performance_metric_coverage);
   renderDistribution(elements.retentionPoints, report.analytics.retention_points_per_import, "points");
+  const backtests = report.historical_backtests;
+  elements.backtestCount.textContent = backtests.experiment_count;
+  elements.backtestEvaluationCount.textContent = backtests.evaluation_count;
+  elements.backtestActualCount.textContent = backtests.actual_clip_count;
+  elements.backtestCompoundCount.textContent = backtests.compound_edit_count;
+  renderCounts(elements.backtestStatuses, backtests.status_counts);
+  renderCounts(elements.backtestAlignmentStatuses, backtests.alignment_status_counts);
+  renderDistribution(elements.backtestAlignmentConfidence, backtests.alignment_confidence);
+  renderDistribution(elements.backtestRecall, backtests.top_k_recall_at_iou_50);
+  renderDistribution(elements.backtestIou, backtests.mean_best_iou);
+  renderDistribution(
+    elements.backtestCorrelation,
+    backtests.performance_rank_correlation,
+  );
   elements.outcomeDistributions.replaceChildren();
   const outcomeEntries = Object.entries(
     report.analytics.performance_metric_distributions || {},

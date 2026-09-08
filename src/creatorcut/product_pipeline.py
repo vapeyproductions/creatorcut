@@ -12,6 +12,7 @@ from typing import Any
 import av
 import numpy as np
 
+from creatorcut.backtest import align_short_to_source, audio_envelope, evaluate_backtest
 from creatorcut.candidates import (
     generate_candidates,
     interval_iou,
@@ -581,6 +582,7 @@ class ProductProcessor:
         try:
             self.require_frozen_serving_release()
             source_path = self.store.media_path_for_video(video_id)
+            backtest_context = self.store.backtest_source_for_video(video_id)
             self.store.update_video(video_id, "validating")
             media = inspect_media(source_path)
             if not media["valid"]:
@@ -731,10 +733,15 @@ class ProductProcessor:
             ranked: list[dict[str, Any]] = []
             storage_rank = 1
             for platform, request in requested_plan["platforms"].items():
-                personalized, _ = self.store.personalize_candidates(
-                    video["creator_id"], scored, platform
-                )
-                personalized, _ = self.store.apply_community_editorial(personalized)
+                if backtest_context is not None and backtest_context["role"] == "holdout":
+                    personalized, _ = self.store.personalize_backtest_candidates(
+                        backtest_context["experiment_id"], scored, platform
+                    )
+                else:
+                    personalized, _ = self.store.personalize_candidates(
+                        video["creator_id"], scored, platform
+                    )
+                    personalized, _ = self.store.apply_community_editorial(personalized)
                 personalized, _ = self.store.apply_source_retention_signal(
                     video_id, personalized
                 )
@@ -746,9 +753,10 @@ class ProductProcessor:
                     }
                     for candidate in personalized
                 ]
-                personalized, _ = self.store.apply_community_performance(
-                    video["creator_id"], personalized, platform
-                )
+                if backtest_context is None or backtest_context["role"] != "holdout":
+                    personalized, _ = self.store.apply_community_performance(
+                        video["creator_id"], personalized, platform
+                    )
                 selected, plan = plan_platform_clips(
                     personalized,
                     platform,
@@ -781,9 +789,272 @@ class ProductProcessor:
             self.store.save_video_clip_plan(video_id, resolved_plan)
             self.store.save_ranked_clips(video_id, ranked)
             self.store.update_video(video_id, "ready")
+            if backtest_context is not None:
+                try:
+                    if backtest_context["role"] == "reference":
+                        self.process_backtest_reference(video_id)
+                    else:
+                        self.store.freeze_backtest_predictions(
+                            video_id, self.serving_release_status()
+                        )
+                except Exception as error:
+                    self.store.mark_backtest_source(
+                        backtest_context["experiment_id"],
+                        backtest_context["source_key"],
+                        "failed",
+                        str(error),
+                    )
         except Exception as error:  # background failures must become visible job state
             self.store.update_video(video_id, "failed", error_message=str(error)[:500])
+            context = self.store.backtest_source_for_video(video_id)
+            if context is not None:
+                self.store.mark_backtest_source(
+                    context["experiment_id"],
+                    context["source_key"],
+                    "failed",
+                    str(error),
+                )
             raise
+
+    def create_historical_clips(
+        self,
+        video_id: str,
+        actuals: list[dict[str, Any]],
+        *,
+        origin: str = "historical_reference",
+    ) -> dict[str, str]:
+        """Score aligned organization-selected intervals in one frozen-model batch."""
+        if not actuals:
+            return {}
+        video = self.store.get_video(video_id)
+        source_path = self.store.media_path_for_video(video_id)
+        media_duration = float(video.get("duration_seconds") or 0.0)
+        transcript_path = self.work_dir / video_id / "transcript.json"
+        transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
+        queue = []
+        candidates = []
+        for actual in actuals:
+            start = float(actual["source_start_seconds"])
+            end = float(actual["source_end_seconds"])
+            if start < 0 or end <= start or end > media_duration or end - start > 180:
+                raise ValueError(f"{actual['content_id']}: aligned interval is invalid")
+            text = transcript_text_for_interval(transcript, start, end)
+            if not text:
+                raise ValueError(f"{actual['content_id']}: aligned interval has no speech")
+            candidate_id = f"{video_id}_{actual['id']}_historical"
+            queue.append(
+                {
+                    "annotation_id": f"{candidate_id}_production",
+                    "candidate_id": candidate_id,
+                    "video_id": video_id,
+                    "start_seconds": start,
+                    "end_seconds": end,
+                    "duration_seconds": end - start,
+                    "transcript_text": text,
+                    "labels": {},
+                }
+            )
+            candidates.append(
+                {
+                    "candidate_id": candidate_id,
+                    "start_seconds": start,
+                    "end_seconds": end,
+                    "duration_seconds": end - start,
+                    "transcript_text": text,
+                    "word_count": len(text.split()),
+                }
+            )
+        frozen_model = json.loads(self.frozen_model_path.read_text(encoding="utf-8"))
+        semantic_metadata = frozen_model["semantic_feature_metadata"]
+        tokenizer_path, encoder_path = _download_model_files(
+            semantic_metadata["model_id"],
+            semantic_metadata["revision"],
+            semantic_metadata["onnx_filename"],
+            self.semantic_cache,
+        )
+        embeddings = encode_texts_onnx(
+            [record["transcript_text"] for record in queue],
+            tokenizer_path,
+            encoder_path,
+            batch_size=16,
+            maximum_length=semantic_metadata.get("maximum_length", DEFAULT_MAX_LENGTH),
+        )
+        artifact = build_embedding_artifact(
+            queue,
+            embeddings,
+            model_id=semantic_metadata["model_id"],
+            revision=semantic_metadata["revision"],
+            onnx_filename=semantic_metadata["onnx_filename"],
+            maximum_length=semantic_metadata.get("maximum_length", DEFAULT_MAX_LENGTH),
+        )
+        predictions = score_frozen_model(queue, artifact, frozen_model)["records"]
+        delivery = extract_candidate_delivery_features(source_path, candidates)
+        saved: dict[str, str] = {}
+        for index, (actual, candidate, prediction) in enumerate(
+            zip(actuals, candidates, predictions, strict=True)
+        ):
+            prepared = attach_publishability(
+                {
+                    **candidate,
+                    "semantic_embedding": embeddings[index].astype(float).tolist(),
+                    "global_score": prediction["predicted_quality_score"],
+                    "predicted_targets": prediction["predicted_targets"],
+                    "multimodal_features": delivery[candidate["candidate_id"]],
+                    "personalized_score": prediction["predicted_quality_score"],
+                    "editorial_adjustment": 0.0,
+                    "performance_adjustment": 0.0,
+                    "semantic_performance_adjustment": 0.0,
+                    "source_retention_adjustment": 0.0,
+                }
+            )
+            clip = {
+                **attach_platform_scores([prepared], "youtube")[0],
+                "platform": "youtube",
+                "platform_rank": None,
+                "ranking_model_version": frozen_model.get(
+                    "freeze_schema", "unversioned_frozen_model"
+                ),
+                "explanation": (
+                    "Organization-selected historical interval. Stored as reference evidence."
+                ),
+            }
+            saved[actual["id"]] = self.store.save_custom_clip(
+                video_id,
+                clip,
+                origin=origin,
+                event_type="historical_selected",
+            )
+        return saved
+
+    def process_backtest_reference(self, video_id: str) -> None:
+        """Align uploaded historical Shorts and register eligible outcome evidence."""
+        context = self.store.backtest_source_for_video(video_id)
+        if context is None or context["role"] != "reference":
+            return
+        pending = self.store.pending_backtest_actual_clips(
+            context["experiment_id"], context["source_key"]
+        )
+        if not pending:
+            self.store.mark_backtest_source(
+                context["experiment_id"],
+                context["source_key"],
+                "failed",
+                "No matching Short files were uploaded",
+            )
+            return
+        source_path = self.store.media_path_for_video(video_id)
+        envelope = audio_envelope(source_path)
+        aligned = []
+        for actual in pending:
+            alignment = align_short_to_source(
+                source_path, Path(actual["media_path"]), envelope
+            )
+            self.store.save_backtest_alignment(actual["id"], alignment)
+            if alignment["status"] == "aligned":
+                aligned.append({**actual, **alignment})
+        saved = self.create_historical_clips(video_id, aligned)
+        for actual in aligned:
+            clip_id = saved[actual["id"]]
+            self.store.save_backtest_alignment(actual["id"], actual, clip_id)
+            self.store.save_performance_report(
+                clip_id,
+                {
+                    "platform": "youtube",
+                    "views": actual.get("views"),
+                    "likes": actual.get("likes"),
+                    "comments": actual.get("comments"),
+                },
+            )
+        warning_count = len(pending) - len(aligned)
+        self.store.mark_backtest_source(
+            context["experiment_id"],
+            context["source_key"],
+            "ready_with_warnings" if warning_count else "ready",
+            f"{warning_count} Short alignments need review" if warning_count else None,
+        )
+
+    def evaluate_backtest_holdout(self, experiment_id: str) -> dict[str, Any]:
+        """Align revealed holdout Shorts and score the frozen recommendation snapshot."""
+        experiment = self.store.get_backtest_experiment(experiment_id)
+        if not experiment["holdout"]["predictions_frozen"]:
+            raise ValueError("Generate and freeze test-video recommendations first")
+        holdout_source = next(
+            source for source in experiment["sources"] if source["role"] == "holdout"
+        )
+        video_id = holdout_source["video_id"]
+        if not video_id:
+            raise ValueError("The test video has not been uploaded")
+        pending = self.store.pending_backtest_actual_clips(
+            experiment_id, experiment["holdout_key"]
+        )
+        if not pending:
+            raise ValueError("Upload the organization-selected test Shorts")
+        source_path = self.store.media_path_for_video(video_id)
+        envelope = audio_envelope(source_path)
+        for actual in pending:
+            alignment = align_short_to_source(
+                source_path, Path(actual["media_path"]), envelope
+            )
+            self.store.save_backtest_alignment(actual["id"], alignment)
+        refreshed = self.store.get_backtest_experiment(experiment_id)
+        evaluation = evaluate_backtest(
+            refreshed["prediction_snapshot"]["recommendations"],
+            refreshed["holdout"]["actual_clips"],
+        )
+        self.store.save_backtest_evaluation(experiment_id, evaluation)
+        return self.store.get_backtest_experiment(experiment_id)
+
+    def correct_backtest_alignment(
+        self,
+        actual_id: str,
+        creator_id: str,
+        start_seconds: float,
+        end_seconds: float,
+    ) -> dict[str, Any]:
+        """Apply a human-reviewed source interval and refresh calibration or evaluation."""
+        actual = self.store.get_backtest_actual_clip(actual_id, creator_id)
+        video = self.store.get_video(actual["video_id"])
+        start = float(start_seconds)
+        end = float(end_seconds)
+        if start < 0 or end <= start or end > float(video["duration_seconds"]):
+            raise ValueError("The corrected interval falls outside the source video")
+        alignment = {
+            "status": "aligned",
+            "source_start_seconds": round(start, 3),
+            "source_end_seconds": round(end, 3),
+            "confidence": 1.0,
+            "method": "manual",
+            "compound_edit_detected": False,
+            "segments": [],
+        }
+        clip_id = actual.get("model_clip_id")
+        if actual["role"] == "reference" and clip_id is None:
+            saved = self.create_historical_clips(
+                actual["video_id"], [{**actual, **alignment}]
+            )
+            clip_id = saved[actual["id"]]
+            self.store.save_performance_report(
+                clip_id,
+                {
+                    "platform": "youtube",
+                    "views": actual.get("views"),
+                    "likes": actual.get("likes"),
+                    "comments": actual.get("comments"),
+                },
+            )
+        self.store.save_backtest_alignment(
+            actual["id"], alignment, clip_id, manual=True
+        )
+        experiment = self.store.get_backtest_experiment(actual["experiment_id"])
+        if actual["role"] == "holdout" and experiment["prediction_snapshot"]:
+            evaluation = evaluate_backtest(
+                experiment["prediction_snapshot"]["recommendations"],
+                self.store.get_backtest_experiment(actual["experiment_id"])["holdout"][
+                    "actual_clips"
+                ],
+            )
+            self.store.save_backtest_evaluation(actual["experiment_id"], evaluation)
+        return self.store.get_backtest_experiment(actual["experiment_id"], creator_id)
 
     def create_custom_clip(
         self,
