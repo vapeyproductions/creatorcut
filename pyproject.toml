@@ -49,6 +49,7 @@ creatorcut-analyze-failures = "creatorcut.failure_analysis:main"
 creatorcut-review-failures = "creatorcut.failure_app:main"
 creatorcut-refine-boundaries = "creatorcut.boundary_refinement:main"
 creatorcut-inspect-media = "creatorcut.media:main"
+creatorcut-web = "creatorcut.product_app:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -61,6 +62,7 @@ creatorcut = ["static/*.html", "static/*.css", "static/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = ["ignore:'cgi' is deprecated.*:DeprecationWarning"]
 
 [tool.ruff]
 line-length = 100

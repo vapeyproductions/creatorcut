@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CreatorCut — find three clips</title>
+    <meta
+      name="description"
+      content="Upload a long video and receive three ranked short-form clip recommendations."
+    />
+    <link rel="stylesheet" href="/assets/product.css" />
+  </head>
+  <body>
+    <header class="masthead">
+      <div>
+        <strong>CREATORCUT</strong>
+        <span>LOCAL TEST BUILD</span>
+      </div>
+      <p>One long video in. Three ranked clips out.</p>
+    </header>
+
+    <main>
+      <section id="upload-section" aria-labelledby="upload-title">
+        <p class="section-number">01 / SOURCE VIDEO</p>
+        <h1 id="upload-title">Choose a video to process</h1>
+        <form id="upload-form">
+          <label for="creator-name">Creator profile</label>
+          <input
+            id="creator-name"
+            name="creator_name"
+            type="text"
+            maxlength="80"
+            value="My channel"
+            required
+          />
+
+          <label for="video-file">Video file</label>
+          <input
+            id="video-file"
+            name="video"
+            type="file"
+            accept="video/mp4,video/quicktime,video/webm,.m4v"
+            required
+          />
+
+          <button id="upload-button" type="submit">PROCESS VIDEO</button>
+          <p id="upload-error" class="error" role="alert" hidden></p>
+        </form>
+        <p class="small-print">
+          Files and feedback stay on this computer in the current build. Processing can take
+          several minutes because transcription and ranking run locally.
+        </p>
+        <section id="recent-section" class="recent-section" hidden>
+          <h2>Recent runs</h2>
+          <ul id="recent-videos"></ul>
+        </section>
+      </section>
+
+      <section id="processing-section" aria-labelledby="processing-title" hidden>
+        <p class="section-number">02 / PROCESSING</p>
+        <h2 id="processing-title">Working on <span id="processing-file"></span></h2>
+        <p id="processing-message">Waiting to begin.</p>
+        <progress id="processing-progress" max="100" value="5">5%</progress>
+        <p class="small-print">You may leave this tab open and continue other work.</p>
+      </section>
+
+      <section id="results-section" aria-labelledby="results-title" hidden>
+        <div class="results-heading">
+          <div>
+            <p class="section-number">03 / RECOMMENDATIONS</p>
+            <h2 id="results-title">Three clips, ranked</h2>
+          </div>
+          <button id="new-video-button" class="plain-button" type="button">PROCESS ANOTHER VIDEO</button>
+        </div>
+        <p id="personalization-status" class="personalization-status"></p>
+        <div id="clips"></div>
+      </section>
+    </main>
+
+    <template id="clip-template">
+      <article class="clip-result">
+        <header>
+          <p class="clip-rank">RANK <strong></strong></p>
+          <p class="clip-time"></p>
+        </header>
+        <div class="clip-columns">
+          <div>
+            <video class="clip-video" preload="metadata" controls playsinline></video>
+            <button class="preview-button plain-button" type="button">PLAY CURRENT SELECTION</button>
+          </div>
+          <div class="clip-information">
+            <p class="clip-explanation"></p>
+            <blockquote class="clip-transcript"></blockquote>
+
+            <fieldset>
+              <legend>Adjust before download <span>(optional)</span></legend>
+              <div class="time-fields">
+                <label>Start <input class="start-input" type="number" step="0.1" /></label>
+                <label>End <input class="end-input" type="number" step="0.1" /></label>
+              </div>
+              <p class="edit-note">Times are in seconds. Adjust by up to 15 seconds.</p>
+            </fieldset>
+
+            <div class="decision-buttons">
+              <button class="download-button" type="button">DOWNLOAD CLIP</button>
+              <button class="reject-button plain-button" type="button">DON'T USE THIS</button>
+            </div>
+            <p class="clip-message" role="status"></p>
+
+            <details class="performance-details">
+              <summary>Posted it? Add performance later</summary>
+              <form class="performance-form">
+                <label>
+                  Platform
+                  <select name="platform">
+                    <option value="tiktok">TikTok</option>
+                    <option value="instagram">Instagram Reels</option>
+                    <option value="youtube">YouTube Shorts</option>
+                    <option value="other">Other</option>
+                  </select>
+                </label>
+                <label>Views <input name="views" type="number" min="0" step="1" /></label>
+                <label>Average viewed % <input name="average_view_percentage" type="number" min="0" max="100" step="0.1" /></label>
+                <label>Likes <input name="likes" type="number" min="0" step="1" /></label>
+                <label>Comments <input name="comments" type="number" min="0" step="1" /></label>
+                <label>Shares <input name="shares" type="number" min="0" step="1" /></label>
+                <button type="submit">SAVE PERFORMANCE</button>
+              </form>
+            </details>
+          </div>
+        </div>
+      </article>
+    </template>
+
+    <footer>
+      <p><strong>How feedback is used</strong></p>
+      <p>
+        Downloads, rejections, and timestamp changes inform creator preferences. Published results
+        are stored separately so editorial taste is not confused with audience performance.
+      </p>
+    </footer>
+
+    <script src="/assets/product.js" defer></script>
+  </body>
+</html>

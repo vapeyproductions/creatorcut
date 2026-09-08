@@ -51,6 +51,19 @@ source venv/bin/activate
 python -m pip install -e '.[dev]'
 ```
 
+Run the local product website:
+
+```bash
+creatorcut-web
+```
+
+The product surface accepts an uploaded video, runs local transcription and frozen-model ranking,
+returns three non-duplicative recommendations, and creates frame-accurate MP4 downloads. A creator
+may adjust either boundary by up to 15 seconds before downloading or reject a recommendation. The
+SQLite product store records which clips were shown, downloaded, edited, or rejected, while keeping
+post-publication performance reports in a separate table. See
+[docs/personalization-and-feedback.md](docs/personalization-and-feedback.md).
+
 Validate the source manifest and annotations:
 
 ```bash
