@@ -1,5 +1,6 @@
 const state = { csrfToken: null, experiment: null, pollTimer: null };
 const selectedFiles = new WeakMap();
+const retainedFileSelections = new Map();
 
 const elements = {
   signin: document.querySelector("#signin-required"),
@@ -48,11 +49,17 @@ function setBusy(form, busy, copy = "WORKING…") {
   button.textContent = busy ? copy : button.dataset.original;
 }
 
-function attachRemovableFileList(input) {
+function attachRemovableFileList(input, retentionKey = null) {
   const list = document.createElement("ul");
   list.className = "selected-file-list";
   const label = input.closest("label");
   (label || input).insertAdjacentElement("afterend", list);
+  const originallyRequired = input.required;
+  const remember = (files) => {
+    selectedFiles.set(input, files);
+    if (retentionKey) retainedFileSelections.set(retentionKey, files);
+    input.required = originallyRequired && files.length === 0;
+  };
   const render = () => {
     list.replaceChildren();
     const files = selectedFiles.get(input) || [];
@@ -69,7 +76,7 @@ function attachRemovableFileList(input) {
         const remaining = (selectedFiles.get(input) || []).filter(
           (_value, fileIndex) => fileIndex !== index,
         );
-        selectedFiles.set(input, remaining);
+        remember(remaining);
         if (!remaining.length) input.value = "";
         render();
       });
@@ -79,10 +86,17 @@ function attachRemovableFileList(input) {
     list.hidden = files.length === 0;
   };
   input.addEventListener("change", () => {
-    selectedFiles.set(input, Array.from(input.files || []));
+    remember(Array.from(input.files || []));
     render();
   });
+  remember(retentionKey ? retainedFileSelections.get(retentionKey) || [] : []);
   render();
+}
+
+function clearRetainedFileSelections(prefix) {
+  for (const key of retainedFileSelections.keys()) {
+    if (key.startsWith(prefix)) retainedFileSelections.delete(key);
+  }
 }
 
 function formDataWithSelectedFiles(form) {
@@ -200,7 +214,8 @@ function renderPredictions(card) {
     input.required = true;
     input.accept = "video/mp4,video/quicktime,video/webm,.m4v";
     label.append(input);
-    attachRemovableFileList(input);
+    const selectionKey = `${state.experiment.id}:${state.experiment.holdout_key}:actual-shorts`;
+    attachRemovableFileList(input, selectionKey);
     const button = document.createElement("button");
     button.type = "submit";
     button.textContent = "REVEAL SHORTS AND SCORE TEST";
@@ -217,6 +232,7 @@ function renderPredictions(card) {
           `/api/admin/backtests/${encodeURIComponent(state.experiment.id)}/holdout-clips`,
           { method: "POST", body: formDataWithSelectedFiles(form) },
         );
+        retainedFileSelections.delete(selectionKey);
         renderExperiment(payload.experiment);
       } catch (error) {
         message.textContent = error.message;
@@ -241,7 +257,10 @@ function renderSource(source) {
   card.querySelector(".source-status").textContent = statusText(source.status);
   card.querySelector(".source-copy").textContent = sourceDescription(source);
   const form = card.querySelector(".source-form");
-  form.querySelectorAll("input[type='file']").forEach(attachRemovableFileList);
+  const selectionPrefix = `${state.experiment.id}:${source.source_key}:`;
+  form.querySelectorAll("input[type='file']").forEach((input) => {
+    attachRemovableFileList(input, `${selectionPrefix}${input.name}`);
+  });
   form.elements.role.value = source.role;
   form.elements.source_key.value = source.source_key;
   const shortLabel = card.querySelector(".short-input");
@@ -265,6 +284,7 @@ function renderSource(source) {
           `/api/admin/backtests/${encodeURIComponent(state.experiment.id)}/sources`,
           { method: "POST", body: formDataWithSelectedFiles(form) },
         );
+        clearRetainedFileSelections(selectionPrefix);
         renderExperiment(payload.experiment);
         schedulePoll();
       } catch (error) {
@@ -295,6 +315,7 @@ function renderSource(source) {
           `/api/admin/backtests/${encodeURIComponent(state.experiment.id)}/sources/${encodeURIComponent(source.source_key)}`,
           { method: "DELETE" },
         );
+        clearRetainedFileSelections(selectionPrefix);
         renderExperiment(payload.experiment);
       } catch (error) {
         sourceMessage.textContent = error.message;
@@ -411,6 +432,7 @@ elements.setupForm.addEventListener("submit", async (event) => {
 elements.newTest.addEventListener("click", () => {
   window.clearTimeout(state.pollTimer);
   state.experiment = null;
+  retainedFileSelections.clear();
   localStorage.removeItem("creatorcut_backtest_id");
   elements.workspace.hidden = true;
   elements.results.hidden = true;

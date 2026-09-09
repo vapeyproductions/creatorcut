@@ -321,3 +321,12 @@ def test_creator_page_uses_one_time_preference_dialog_without_internal_tools():
     assert "HELD-OUT RECOMMENDATION TEST" not in html
     assert 'href="/admin"' in html
     assert 'href="/admin/evaluation"' not in html
+
+
+def test_backtest_upload_selections_survive_processing_poll_renders():
+    javascript = Path("src/creatorcut/static/backtest.js").read_text(encoding="utf-8")
+
+    assert "const retainedFileSelections = new Map();" in javascript
+    assert "retainedFileSelections.get(retentionKey)" in javascript
+    assert "attachRemovableFileList(input, `${selectionPrefix}${input.name}`);" in javascript
+    assert "clearRetainedFileSelections(selectionPrefix);" in javascript

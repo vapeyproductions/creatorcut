@@ -194,6 +194,31 @@ def test_staged_backtest_video_is_invisible_to_worker_until_enqueue(tmp_path):
     assert claimed["video_id"] == video["id"]
 
 
+def test_second_reference_can_upload_while_first_reference_is_processing(tmp_path):
+    store = ProductStore(tmp_path / "creatorcut.sqlite")
+    creator = store.ensure_creator("Administrator")
+    experiment = store.create_backtest_experiment(
+        creator["id"], "Recommendation test", "tracker.csv", parsed_tracker()
+    )
+
+    for source_key in experiment["reference_keys"]:
+        path = tmp_path / f"{source_key}.mp4"
+        path.touch()
+        video = store.create_video(
+            creator["id"], path.name, path, enqueue_processing=False
+        )
+        store.attach_backtest_source(
+            experiment["id"], creator["id"], source_key, "reference", video["id"]
+        )
+
+    refreshed = store.get_backtest_experiment(experiment["id"], creator["id"])
+
+    assert [source["status"] for source in refreshed["sources"][:2]] == [
+        "processing",
+        "processing",
+    ]
+
+
 def test_demo_source_reset_removes_private_files_and_allows_reupload(tmp_path):
     store = ProductStore(tmp_path / "creatorcut.sqlite")
     creator = store.ensure_creator("Administrator")
